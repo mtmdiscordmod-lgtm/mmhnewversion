@@ -799,14 +799,20 @@ function getEventsData() {
       status = 'active';
     }
 
+    // Convert dates to ISO strings for serialization
+    var startDateVal = row[4];
+    var endDateVal = row[5];
+    var startDateStr = startDateVal instanceof Date ? startDateVal.toISOString() : String(startDateVal || '');
+    var endDateStr = endDateVal instanceof Date ? endDateVal.toISOString() : String(endDateVal || '');
+
     events.push({
       rowIndex: index + 3,
       eventId: row[0],
       name: row[1],
       description: row[2],
       trackCode: row[3],
-      startDate: row[4],
-      endDate: row[5],
+      startDate: startDateStr,
+      endDate: endDateStr,
       openToAll: true, // Events are always open to all students
       // Tier 1 (Bronze) - supports BOTH bonuses
       tier1: {
@@ -1564,65 +1570,72 @@ function pingCurriculum() {
 function getCurriculumDashboardData() {
   try {
     // LAZY LOADING: Return minimal data for initial page load
-    // Assignments are loaded on-demand via getTrackAssignments()
+    // Assignments, Events, LootItems are loaded on-demand
 
     var result = {
-      _debug: ['LAZY LOAD: Building minimal result...'],
+      _debug: ['LAZY LOAD v2: Starting...'],
       studios: ['Sound', 'Visual', 'Interactive'],
       resourceTypes: ['None', 'YouTube', 'Link'],
       curriculum: { studios: {} },
-      events: [],
-      lootItems: []
+      events: [],      // Load via getEventsData() when Events tab opens
+      lootItems: []    // Load via getAvailableLootItems() when needed
     };
 
     // Step 1: Get MINIMAL track overview (no assignments - they load on demand)
     try {
       var overview = getTracksOverview();
-      result._debug.push('getTracksOverview: ' + overview.trackCount + ' tracks');
+      result._debug.push('Tracks: ' + (overview ? overview.trackCount : 0));
 
       // Convert overview format to curriculum.studios format expected by frontend
-      if (overview.studios) {
-        Object.keys(overview.studios).forEach(function(studioName) {
+      if (overview && overview.studios) {
+        var studioNames = Object.keys(overview.studios);
+        for (var i = 0; i < studioNames.length; i++) {
+          var studioName = studioNames[i];
           var studioData = overview.studios[studioName];
+          var trackArr = [];
+
+          if (studioData.tracks) {
+            for (var j = 0; j < studioData.tracks.length; j++) {
+              var t = studioData.tracks[j];
+              trackArr.push({
+                code: String(t.code || ''),
+                name: String(t.name || ''),
+                studio: String(t.studio || studioName),
+                levels: t.levels || []
+              });
+            }
+          }
+
           result.curriculum.studios[studioName] = {
-            name: studioData.name,
-            trackCount: studioData.tracks ? studioData.tracks.length : 0,
-            tracks: (studioData.tracks || []).map(function(t) {
-              return {
-                code: t.code,
-                name: t.name,
-                studio: t.studio,
-                levels: t.levels || [],
-                // NO assignments here - they load on demand!
-                _lazyLoad: true
-              };
-            })
+            name: studioName,
+            trackCount: trackArr.length,
+            tracks: trackArr
           };
-        });
+        }
       }
-      result._debug.push('Studios built: ' + Object.keys(result.curriculum.studios).join(', '));
+      result._debug.push('Studios: ' + Object.keys(result.curriculum.studios).join(','));
     } catch (e) {
-      result._debug.push('getTracksOverview FAILED: ' + e.message);
+      result._debug.push('ERR: ' + e.message);
     }
 
-    // Step 2: Events (small dataset, load it)
+    result._debug.push('Done');
+
+    // CRITICAL: Force JSON serialization to ensure clean data for google.script.run
     try {
-      result.events = getEventsData() || [];
-      result._debug.push('getEventsData: ' + result.events.length + ' events');
-    } catch (e) {
-      result._debug.push('getEventsData FAILED: ' + e.message);
+      var jsonStr = JSON.stringify(result);
+      result._debug.push('JSON size: ' + jsonStr.length + ' bytes');
+      var cleanResult = JSON.parse(jsonStr);
+      return cleanResult;
+    } catch (jsonErr) {
+      return {
+        _debug: ['JSON ERROR: ' + jsonErr.message],
+        studios: ['Sound', 'Visual', 'Interactive'],
+        resourceTypes: ['None', 'YouTube', 'Link'],
+        curriculum: { studios: {} },
+        events: [],
+        lootItems: []
+      };
     }
-
-    // Step 3: Loot items (needed for event dropdown)
-    try {
-      result.lootItems = getAvailableLootItems() || [];
-      result._debug.push('getAvailableLootItems: ' + result.lootItems.length + ' items');
-    } catch (e) {
-      result._debug.push('getAvailableLootItems FAILED: ' + e.message);
-    }
-
-    result._debug.push('Build complete');
-    return result;
 
   } catch (outerError) {
     return {

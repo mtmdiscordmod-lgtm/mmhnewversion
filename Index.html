@@ -4881,6 +4881,7 @@
 
       // === EVENTS FUNCTIONS ===
       let availableLootItems = ['Mystery Box', 'Rare Item', 'Epic Item', 'Legendary Item'];
+      let eventsData = [];  // Cache for events data
 
       function loadEventsData() {
         document.getElementById('events-list').innerHTML = '<p style="color: var(--muted); text-align: center; padding: 40px;">Loading events...</p>';
@@ -4888,6 +4889,7 @@
         google.script.run
           .withSuccessHandler(events => {
             console.log('Events loaded:', events);
+            eventsData = events || [];  // Cache for editing
             renderEvents(events);
           })
           .withFailureHandler(err => {
@@ -4930,7 +4932,7 @@
         }
 
         container.innerHTML = events.map(ev => `
-          <div class="event-card ${ev.status}">
+          <div class="event-card ${ev.status}" data-row="${ev.rowIndex}" id="event-row-${ev.rowIndex}">
             <div style="display: flex; justify-content: space-between; align-items: flex-start;">
               <span class="event-status ${ev.status}">${ev.status.toUpperCase()}</span>
               <span style="background: linear-gradient(135deg, var(--success), #2ecc71); color: #fff; padding: 4px 10px; border-radius: 12px; font-size: 10px; font-weight: bold;">🌍 ALL STUDENTS</span>
@@ -4958,7 +4960,7 @@
             ${ev.bonusDays > 0 ? `<div style="margin-top: 10px; font-size: 11px; color: var(--muted);">⏱️ Bonus effects last ${ev.bonusDays} days</div>` : ''}
             <div style="margin-top: 15px; display: flex; gap: 10px;">
               <button class="btn-secondary" onclick="editEvent(${ev.rowIndex})" style="font-size: 12px;">✏️ Edit</button>
-              <button class="btn-secondary" onclick="deleteEventConfirm(${ev.rowIndex}, '${ev.name}')" style="font-size: 12px; border-color: var(--danger); color: var(--danger);">🗑️ Delete</button>
+              <button class="btn-secondary" onclick="deleteEventConfirm(${ev.rowIndex}, '${ev.name.replace(/'/g, "\\'")}')" style="font-size: 12px; border-color: var(--danger); color: var(--danger);">🗑️ Delete</button>
             </div>
           </div>
         `).join('');
@@ -5017,9 +5019,14 @@
 
       function closeEventModal() {
         document.getElementById('event-modal').style.display = 'none';
+        editingEventRowIndex = null;  // Reset edit state
+        // Reset modal title
+        const modalTitle = document.querySelector('#event-modal .modal-header h3');
+        if (modalTitle) modalTitle.textContent = '📅 Create Special Event';
       }
 
       function saveNewEvent() {
+        const isEditing = editingEventRowIndex !== null;
         const eventData = {
           name: document.getElementById('event-name-input').value.trim(),
           description: document.getElementById('event-desc-input').value.trim(),
@@ -5058,36 +5065,139 @@
           return;
         }
 
-        google.script.run
-          .withSuccessHandler(result => {
-            console.log('Create event result:', result);
-            if (result && result.success) {
-              alert('Event created successfully!');
-              closeEventModal();
-              loadEventsData();
-            } else {
-              alert('Error: ' + (result ? result.message : 'Unknown error - result was null'));
-            }
-          })
-          .withFailureHandler(err => {
-            console.error('Create event failed:', err);
-            alert('Failed to create event: ' + (err.message || err));
-          })
-          .createEvent(eventData);
+        if (isEditing) {
+          // Update existing event
+          google.script.run
+            .withSuccessHandler(result => {
+              console.log('Update event result:', result);
+              if (result && result.success) {
+                closeEventModal();
+                loadEventsData();  // Refresh to show updated data
+              } else {
+                alert('Error: ' + (result ? result.message : 'Unknown error'));
+              }
+            })
+            .withFailureHandler(err => {
+              console.error('Update event failed:', err);
+              alert('Failed to update event: ' + (err.message || err));
+            })
+            .updateEvent(editingEventRowIndex, eventData);
+        } else {
+          // Create new event
+          google.script.run
+            .withSuccessHandler(result => {
+              console.log('Create event result:', result);
+              if (result && result.success) {
+                closeEventModal();
+                loadEventsData();
+              } else {
+                alert('Error: ' + (result ? result.message : 'Unknown error - result was null'));
+              }
+            })
+            .withFailureHandler(err => {
+              console.error('Create event failed:', err);
+              alert('Failed to create event: ' + (err.message || err));
+            })
+            .createEvent(eventData);
+        }
       }
 
       function deleteEventConfirm(rowIndex, name) {
         if (confirm('Delete event "' + name + '"?')) {
+          // Instantly remove the card from UI (optimistic update)
+          const card = document.getElementById('event-row-' + rowIndex);
+          if (card) {
+            card.style.transition = 'opacity 0.3s, transform 0.3s';
+            card.style.opacity = '0';
+            card.style.transform = 'scale(0.9)';
+            setTimeout(() => card.remove(), 300);
+          }
+
+          // Also remove from local cache
+          if (eventsData) {
+            eventsData = eventsData.filter(e => e.rowIndex !== rowIndex);
+          }
+
+          // Delete from backend
           google.script.run
             .withSuccessHandler(result => {
-              if (result.success) {
-                loadEventsData();
-              } else {
+              if (!result.success) {
                 alert('Error: ' + result.message);
+                loadEventsData(); // Reload to restore if failed
               }
+            })
+            .withFailureHandler(err => {
+              alert('Delete failed: ' + (err.message || err));
+              loadEventsData(); // Reload to restore
             })
             .deleteEvent(rowIndex, true);
         }
+      }
+
+      // Store current event being edited
+      let editingEventRowIndex = null;
+
+      function editEvent(rowIndex) {
+        // Find the event in our cached data
+        if (!eventsData) {
+          alert('Events not loaded yet');
+          return;
+        }
+
+        const ev = eventsData.find(e => e.rowIndex === rowIndex);
+        if (!ev) {
+          alert('Event not found');
+          return;
+        }
+
+        editingEventRowIndex = rowIndex;
+
+        // Show modal and populate with existing data
+        document.getElementById('event-modal').style.display = 'flex';
+        document.getElementById('event-name-input').value = ev.name || '';
+        document.getElementById('event-desc-input').value = ev.description || '';
+        document.getElementById('event-track-code-input').value = ev.trackCode || '';
+        document.getElementById('event-bonus-days-input').value = ev.bonusDays || 7;
+
+        // Format dates for input
+        const startDate = ev.startDate ? new Date(ev.startDate).toISOString().split('T')[0] : '';
+        const endDate = ev.endDate ? new Date(ev.endDate).toISOString().split('T')[0] : '';
+        document.getElementById('event-start-input').value = startDate;
+        document.getElementById('event-end-input').value = endDate;
+
+        // Tier 1
+        document.getElementById('event-t1-threshold').value = ev.tier1?.mpThreshold || 50;
+        document.getElementById('event-t1-mp').value = ev.tier1?.rawMP || 0;
+        document.getElementById('event-t1-coins').value = ev.tier1?.coins || 0;
+        document.getElementById('event-t1-mp-bonus').value = ev.tier1?.mpBonus || 0;
+        document.getElementById('event-t1-coin-bonus').value = ev.tier1?.coinBonus || 0;
+        if (document.getElementById('event-t1-loot')) {
+          document.getElementById('event-t1-loot').value = ev.tier1?.lootItem || '';
+        }
+
+        // Tier 2
+        document.getElementById('event-t2-threshold').value = ev.tier2?.mpThreshold || 100;
+        document.getElementById('event-t2-mp').value = ev.tier2?.rawMP || 0;
+        document.getElementById('event-t2-coins').value = ev.tier2?.coins || 0;
+        document.getElementById('event-t2-mp-bonus').value = ev.tier2?.mpBonus || 0;
+        document.getElementById('event-t2-coin-bonus').value = ev.tier2?.coinBonus || 0;
+        if (document.getElementById('event-t2-loot')) {
+          document.getElementById('event-t2-loot').value = ev.tier2?.lootItem || '';
+        }
+
+        // Tier 3
+        document.getElementById('event-t3-threshold').value = ev.tier3?.mpThreshold || 150;
+        document.getElementById('event-t3-mp').value = ev.tier3?.rawMP || 0;
+        document.getElementById('event-t3-coins').value = ev.tier3?.coins || 0;
+        document.getElementById('event-t3-mp-bonus').value = ev.tier3?.mpBonus || 0;
+        document.getElementById('event-t3-coin-bonus').value = ev.tier3?.coinBonus || 0;
+        if (document.getElementById('event-t3-loot')) {
+          document.getElementById('event-t3-loot').value = ev.tier3?.lootItem || '';
+        }
+
+        // Change modal title/button to indicate editing
+        const modalTitle = document.querySelector('#event-modal .modal-header h3');
+        if (modalTitle) modalTitle.textContent = '✏️ Edit Event';
       }
 
       // === PUBLISH FUNCTIONS ===
