@@ -1419,14 +1419,12 @@ function pingCurriculum() {
 
 /**
  * Get full curriculum dashboard data
- * NOTE: Temporarily returning minimal data to debug null return issue
+ * NOTE: Using JSON stringify/parse to ensure serializable data
  */
 function getCurriculumDashboardData() {
-  // TEMPORARY: Return minimal data to test if size is the issue
   try {
-    // Step 1: Just return bare minimum
-    var minimalResult = {
-      _debug: ['MINIMAL TEST - Step 1'],
+    var result = {
+      _debug: ['Building result...'],
       studios: ['Sound', 'Visual', 'Interactive'],
       resourceTypes: ['None', 'YouTube', 'Link'],
       curriculum: { studios: {}, tracks: [], raw: [] },
@@ -1438,53 +1436,112 @@ function getCurriculumDashboardData() {
       lootItems: []
     };
 
-    // Step 2: Try to add curriculum data
+    // Step 1: Get curriculum data and FLATTEN the studios structure
     try {
       var currData = getCurriculumData();
       if (currData) {
-        // Only include summary, not full raw data yet
-        minimalResult._debug.push('getCurriculumData returned ' + (currData.raw ? currData.raw.length : 0) + ' items');
-        minimalResult.curriculum = {
-          studios: currData.studios || {},
+        result._debug.push('getCurriculumData: ' + (currData.raw ? currData.raw.length : 0) + ' items');
+
+        // Flatten the studios structure - remove circular/deep nesting
+        var flatStudios = {};
+        if (currData.studios) {
+          Object.keys(currData.studios).forEach(function(studioName) {
+            var studio = currData.studios[studioName];
+            flatStudios[studioName] = {
+              name: studio.name,
+              trackCount: studio.tracks ? studio.tracks.length : 0,
+              tracks: (studio.tracks || []).map(function(t) {
+                return {
+                  code: t.code,
+                  name: t.name,
+                  studio: t.studio,
+                  unlockMP: t.unlockMP,
+                  rowIndex: t.rowIndex,
+                  levelCount: t.levels ? t.levels.length : 0,
+                  levels: (t.levels || []).map(function(l) {
+                    return {
+                      level: l.level,
+                      assignmentCount: l.assignments ? l.assignments.length : 0,
+                      assignments: (l.assignments || []).map(function(a) {
+                        return {
+                          num: a.num,
+                          week: a.week,
+                          title: a.title,
+                          maxMP: a.maxMP,
+                          status: a.status,
+                          rowIndex: a.rowIndex
+                        };
+                      })
+                    };
+                  })
+                };
+              })
+            };
+          });
+        }
+
+        result.curriculum = {
+          studios: flatStudios,
           tracks: currData.tracks || [],
-          raw: [] // Skip raw for now to reduce size
+          raw: [] // Skip raw to reduce size
         };
-        minimalResult._debug.push('Curriculum added (without raw)');
+        result._debug.push('Curriculum flattened OK');
       }
     } catch (e) {
-      minimalResult._debug.push('getCurriculumData FAILED: ' + e.message);
+      result._debug.push('getCurriculumData FAILED: ' + e.message);
     }
 
-    // Step 3: Try tracks
+    // Step 2: Get tracks list
     try {
-      var tracks = getTracksList();
-      minimalResult.tracks = tracks || [];
-      minimalResult._debug.push('getTracksList: ' + (tracks ? tracks.length : 0) + ' tracks');
+      result.tracks = getTracksList() || [];
+      result._debug.push('getTracksList: ' + result.tracks.length + ' tracks');
     } catch (e) {
-      minimalResult._debug.push('getTracksList FAILED: ' + e.message);
+      result._debug.push('getTracksList FAILED: ' + e.message);
     }
 
-    // Step 4: Events (should be small)
+    // Step 3: Events
     try {
-      minimalResult.events = getEventsData() || [];
-      minimalResult._debug.push('getEventsData: OK');
+      result.events = getEventsData() || [];
+      result._debug.push('getEventsData: OK');
     } catch (e) {
-      minimalResult._debug.push('getEventsData FAILED: ' + e.message);
+      result._debug.push('getEventsData FAILED: ' + e.message);
     }
 
-    // Step 5: Other small data
+    // Step 4: Loot items
     try {
-      minimalResult.lootItems = getAvailableLootItems() || [];
-      minimalResult._debug.push('getAvailableLootItems: OK');
+      result.lootItems = getAvailableLootItems() || [];
+      result._debug.push('getAvailableLootItems: OK');
     } catch (e) {
-      minimalResult._debug.push('getAvailableLootItems FAILED: ' + e.message);
+      result._debug.push('getAvailableLootItems FAILED: ' + e.message);
     }
 
-    // Skip publishQueue, forms, history for now
-    minimalResult._debug.push('Skipped: publishQueue, forms, history');
-    minimalResult._debug.push('MINIMAL TEST COMPLETE');
+    result._debug.push('Build complete, serializing...');
 
-    return minimalResult;
+    // CRITICAL: Force JSON serialization to catch any issues
+    try {
+      var jsonStr = JSON.stringify(result);
+      result._debug.push('JSON size: ' + jsonStr.length + ' bytes');
+
+      // Parse it back to ensure it's clean
+      var cleanResult = JSON.parse(jsonStr);
+      cleanResult._debug.push('Serialization OK');
+      return cleanResult;
+    } catch (jsonErr) {
+      result._debug.push('JSON SERIALIZATION FAILED: ' + jsonErr.message);
+      // Return a minimal safe result
+      return {
+        _debug: result._debug,
+        studios: ['Sound', 'Visual', 'Interactive'],
+        resourceTypes: ['None', 'YouTube', 'Link'],
+        curriculum: { studios: {}, tracks: [], raw: [] },
+        tracks: [],
+        events: [],
+        publishQueue: [],
+        forms: [],
+        history: [],
+        lootItems: []
+      };
+    }
 
   } catch (outerError) {
     return {
