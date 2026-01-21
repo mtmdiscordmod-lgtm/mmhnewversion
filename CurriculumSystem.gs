@@ -251,6 +251,146 @@ function setupCurriculumSheets() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
+ * LAZY LOADING: Get minimal track overview (no assignments)
+ * This is fast and small - suitable for initial page load
+ */
+function getTracksOverview() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tracksSheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.TRACKS);
+
+  if (!tracksSheet || tracksSheet.getLastRow() < 3) {
+    return { studios: {}, trackCount: 0 };
+  }
+
+  // Tracks sheet columns: Track Code, Track Name, Studio, Level, Unlock MP, Prerequisites, Active, Assign To, Track Type, Notes
+  var tracksData = tracksSheet.getRange(3, 1, tracksSheet.getLastRow() - 2, 10).getValues();
+
+  var studios = {};
+  var trackCount = 0;
+
+  tracksData.forEach(function(row) {
+    if (!row[0]) return;
+
+    var trackCode = row[0];
+    var trackName = row[1];
+    var studio = row[2] || 'Sound';
+    var level = parseInt(row[3]) || 0;
+
+    // Initialize studio if needed
+    if (!studios[studio]) {
+      studios[studio] = { name: studio, tracks: [] };
+    }
+
+    // Check if track already exists in this studio
+    var existingTrack = studios[studio].tracks.find(function(t) {
+      return t.code === trackCode;
+    });
+
+    if (!existingTrack) {
+      studios[studio].tracks.push({
+        code: trackCode,
+        name: trackName,
+        studio: studio,
+        levels: [level]
+      });
+      trackCount++;
+    } else {
+      // Add level if not already present
+      if (existingTrack.levels.indexOf(level) === -1) {
+        existingTrack.levels.push(level);
+        existingTrack.levels.sort(function(a, b) { return a - b; });
+      }
+    }
+  });
+
+  return { studios: studios, trackCount: trackCount };
+}
+
+/**
+ * LAZY LOADING: Get assignments for a specific track and level
+ * Called when user expands a track
+ */
+function getTrackAssignments(trackCode, level) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var assignSheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.CREATE_ASSIGNMENT);
+
+  if (!assignSheet || assignSheet.getLastRow() < 3) {
+    return [];
+  }
+
+  // Columns: Track Code, Level, Week, Assign#, Title, Max MP, Topic, Description, View Materials, Copy Materials, Website ID, Status, Classroom ID, Created Date
+  var assignData = assignSheet.getRange(3, 1, assignSheet.getLastRow() - 2, 14).getValues();
+
+  var assignments = [];
+  var levelNum = parseInt(level) || 0;
+
+  assignData.forEach(function(row, index) {
+    if (row[0] === trackCode && parseInt(row[1]) === levelNum) {
+      assignments.push({
+        rowIndex: index + 3,
+        trackCode: row[0],
+        level: parseInt(row[1]) || 0,
+        week: row[2] || 'A',
+        num: parseInt(row[3]) || 1,
+        title: row[4] || '',
+        maxMP: parseInt(row[5]) || 10,
+        topic: row[6] || '',
+        description: row[7] || '',
+        viewMaterials: row[8] || '',
+        copyMaterials: row[9] || '',
+        websiteId: row[10] || '',
+        status: row[11] || '⏳ Ready',
+        classroomId: row[12] || '',
+        createdDate: row[13] || ''
+      });
+    }
+  });
+
+  // Sort by week then by assignment number
+  assignments.sort(function(a, b) {
+    if (a.week !== b.week) return a.week.localeCompare(b.week);
+    return a.num - b.num;
+  });
+
+  return assignments;
+}
+
+/**
+ * LAZY LOADING: Get track details (metadata, not assignments)
+ */
+function getTrackDetails(trackCode) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tracksSheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.TRACKS);
+
+  if (!tracksSheet || tracksSheet.getLastRow() < 3) {
+    return null;
+  }
+
+  var tracksData = tracksSheet.getRange(3, 1, tracksSheet.getLastRow() - 2, 10).getValues();
+
+  for (var i = 0; i < tracksData.length; i++) {
+    var row = tracksData[i];
+    if (row[0] === trackCode) {
+      return {
+        code: row[0],
+        name: row[1],
+        studio: row[2] || 'Sound',
+        level: parseInt(row[3]) || 0,
+        unlockMP: parseInt(row[4]) || 160,
+        prerequisites: row[5] || '',
+        active: row[6] === true || row[6] === 'TRUE',
+        assignTo: row[7] || 'UNLOCKED_ONLY',
+        trackType: row[8] || 'Power',
+        notes: row[9] || '',
+        rowIndex: i + 3
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Get all curriculum data from EXISTING sheets
  * Reads from ⚙️ Tracks and ➕ Create Assignments
  * Returns: { studios: { Sound: { tracks: [...] } } }
@@ -1423,137 +1563,74 @@ function pingCurriculum() {
  */
 function getCurriculumDashboardData() {
   try {
+    // LAZY LOADING: Return minimal data for initial page load
+    // Assignments are loaded on-demand via getTrackAssignments()
+
     var result = {
-      _debug: ['Building result...'],
+      _debug: ['LAZY LOAD: Building minimal result...'],
       studios: ['Sound', 'Visual', 'Interactive'],
       resourceTypes: ['None', 'YouTube', 'Link'],
-      curriculum: { studios: {}, tracks: [], raw: [] },
-      tracks: [],
+      curriculum: { studios: {} },
       events: [],
-      publishQueue: [],
-      forms: [],
-      history: [],
       lootItems: []
     };
 
-    // Step 1: Get curriculum data and FLATTEN the studios structure
+    // Step 1: Get MINIMAL track overview (no assignments - they load on demand)
     try {
-      var currData = getCurriculumData();
-      if (currData) {
-        result._debug.push('getCurriculumData: ' + (currData.raw ? currData.raw.length : 0) + ' items');
+      var overview = getTracksOverview();
+      result._debug.push('getTracksOverview: ' + overview.trackCount + ' tracks');
 
-        // Flatten the studios structure - remove circular/deep nesting
-        var flatStudios = {};
-        if (currData.studios) {
-          Object.keys(currData.studios).forEach(function(studioName) {
-            var studio = currData.studios[studioName];
-            flatStudios[studioName] = {
-              name: studio.name,
-              trackCount: studio.tracks ? studio.tracks.length : 0,
-              tracks: (studio.tracks || []).map(function(t) {
-                return {
-                  code: t.code,
-                  name: t.name,
-                  studio: t.studio,
-                  unlockMP: t.unlockMP,
-                  rowIndex: t.rowIndex,
-                  levelCount: t.levels ? t.levels.length : 0,
-                  levels: (t.levels || []).map(function(l) {
-                    return {
-                      level: l.level,
-                      assignmentCount: l.assignments ? l.assignments.length : 0,
-                      assignments: (l.assignments || []).map(function(a) {
-                        return {
-                          num: a.num,
-                          week: a.week,
-                          title: a.title,
-                          maxMP: a.maxMP,
-                          status: a.status,
-                          rowIndex: a.rowIndex
-                        };
-                      })
-                    };
-                  })
-                };
-              })
-            };
-          });
-        }
-
-        result.curriculum = {
-          studios: flatStudios,
-          tracks: currData.tracks || [],
-          raw: [] // Skip raw to reduce size
-        };
-        result._debug.push('Curriculum flattened OK');
+      // Convert overview format to curriculum.studios format expected by frontend
+      if (overview.studios) {
+        Object.keys(overview.studios).forEach(function(studioName) {
+          var studioData = overview.studios[studioName];
+          result.curriculum.studios[studioName] = {
+            name: studioData.name,
+            trackCount: studioData.tracks ? studioData.tracks.length : 0,
+            tracks: (studioData.tracks || []).map(function(t) {
+              return {
+                code: t.code,
+                name: t.name,
+                studio: t.studio,
+                levels: t.levels || [],
+                // NO assignments here - they load on demand!
+                _lazyLoad: true
+              };
+            })
+          };
+        });
       }
+      result._debug.push('Studios built: ' + Object.keys(result.curriculum.studios).join(', '));
     } catch (e) {
-      result._debug.push('getCurriculumData FAILED: ' + e.message);
+      result._debug.push('getTracksOverview FAILED: ' + e.message);
     }
 
-    // Step 2: Get tracks list
-    try {
-      result.tracks = getTracksList() || [];
-      result._debug.push('getTracksList: ' + result.tracks.length + ' tracks');
-    } catch (e) {
-      result._debug.push('getTracksList FAILED: ' + e.message);
-    }
-
-    // Step 3: Events
+    // Step 2: Events (small dataset, load it)
     try {
       result.events = getEventsData() || [];
-      result._debug.push('getEventsData: OK');
+      result._debug.push('getEventsData: ' + result.events.length + ' events');
     } catch (e) {
       result._debug.push('getEventsData FAILED: ' + e.message);
     }
 
-    // Step 4: Loot items
+    // Step 3: Loot items (needed for event dropdown)
     try {
       result.lootItems = getAvailableLootItems() || [];
-      result._debug.push('getAvailableLootItems: OK');
+      result._debug.push('getAvailableLootItems: ' + result.lootItems.length + ' items');
     } catch (e) {
       result._debug.push('getAvailableLootItems FAILED: ' + e.message);
     }
 
-    result._debug.push('Build complete, serializing...');
-
-    // CRITICAL: Force JSON serialization to catch any issues
-    try {
-      var jsonStr = JSON.stringify(result);
-      result._debug.push('JSON size: ' + jsonStr.length + ' bytes');
-
-      // Parse it back to ensure it's clean
-      var cleanResult = JSON.parse(jsonStr);
-      cleanResult._debug.push('Serialization OK');
-      return cleanResult;
-    } catch (jsonErr) {
-      result._debug.push('JSON SERIALIZATION FAILED: ' + jsonErr.message);
-      // Return a minimal safe result
-      return {
-        _debug: result._debug,
-        studios: ['Sound', 'Visual', 'Interactive'],
-        resourceTypes: ['None', 'YouTube', 'Link'],
-        curriculum: { studios: {}, tracks: [], raw: [] },
-        tracks: [],
-        events: [],
-        publishQueue: [],
-        forms: [],
-        history: [],
-        lootItems: []
-      };
-    }
+    result._debug.push('Build complete');
+    return result;
 
   } catch (outerError) {
     return {
       _debug: ['OUTER ERROR: ' + outerError.message],
       studios: ['Sound', 'Visual', 'Interactive'],
       resourceTypes: ['None', 'YouTube', 'Link'],
-      curriculum: { studios: {}, tracks: [], raw: [] },
-      tracks: [],
+      curriculum: { studios: {} },
       events: [],
-      publishQueue: [],
-      forms: [],
-      history: [],
       lootItems: []
     };
   }

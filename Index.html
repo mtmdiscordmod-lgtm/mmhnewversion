@@ -3930,6 +3930,10 @@
       let expandedLevel = null;
       let expandedAssignment = null;
 
+      // LAZY LOADING: Cache for loaded track assignments
+      let trackAssignmentsCache = {};  // key: "TRACKCODE-L#", value: assignments array
+      let loadingLevels = {};          // key: "TRACKCODE-L#", value: true/false
+
       // ═══════════════════════════════════════════════════════════════════════════
       // ACHIEVEMENT DETAILS FUNCTIONS
       // ═══════════════════════════════════════════════════════════════════════════
@@ -4311,8 +4315,13 @@
 
                 // Show debug info briefly
                 const studioNames = Object.keys(data.curriculum.studios);
-                const trackCount = data.curriculum.raw ? data.curriculum.raw.length : 0;
-                document.getElementById('studios-container').innerHTML = debugHtml + '<div style="background: #064e3b; border: 1px solid #34d399; padding: 10px; border-radius: 8px; margin-bottom: 20px;"><strong style="color: #34d399;">✓ Data Loaded:</strong> ' + studioNames.length + ' studios, ' + trackCount + ' tracks</div>';
+                let trackCount = 0;
+                studioNames.forEach(s => {
+                  if (data.curriculum.studios[s] && data.curriculum.studios[s].tracks) {
+                    trackCount += data.curriculum.studios[s].tracks.length;
+                  }
+                });
+                document.getElementById('studios-container').innerHTML = debugHtml + '<div style="background: #064e3b; border: 1px solid #34d399; padding: 10px; border-radius: 8px; margin-bottom: 20px;"><strong style="color: #34d399;">✓ Data Loaded (Lazy Mode):</strong> ' + studioNames.length + ' studios, ' + trackCount + ' tracks</div>';
 
                 // Now render
                 try {
@@ -4335,7 +4344,17 @@
       }
 
       function refreshCurriculumData() {
+        // Clear lazy loading cache
+        trackAssignmentsCache = {};
+        loadingLevels = {};
         loadCurriculumData();
+      }
+
+      // Helper to clear cache for a specific track/level (call after saves)
+      function invalidateTrackCache(trackCode, level) {
+        const cacheKey = trackCode + '-L' + level;
+        delete trackAssignmentsCache[cacheKey];
+        delete loadingLevels[cacheKey];
       }
 
       function renderStudios() {
@@ -4355,18 +4374,12 @@
           if (!studio) return;
 
           const trackCount = studio.tracks ? studio.tracks.length : 0;
-          let achievementCount = 0;
-
+          // Count total levels across all tracks (lazy loading: can't count assignments until loaded)
+          let levelCount = 0;
           if (studio.tracks) {
             studio.tracks.forEach(track => {
               if (track.levels) {
-                track.levels.forEach(level => {
-                  if (level.assignments) {
-                    level.assignments.forEach(assign => {
-                      achievementCount += assign.achievements ? assign.achievements.length : 0;
-                    });
-                  }
-                });
+                levelCount += Array.isArray(track.levels) ? track.levels.length : 0;
               }
             });
           }
@@ -4382,7 +4395,7 @@
               <div class="studio-card-title">${icon} ${studioName.toUpperCase()} STUDIO</div>
               <div class="studio-stats">
                 <span>📚 ${trackCount} tracks</span>
-                <span>🎯 ${achievementCount} achievements</span>
+                <span>📊 ${levelCount} levels</span>
               </div>
             </div>
             <div class="studio-card-body">
@@ -4457,45 +4470,107 @@
           return '<p style="color: var(--muted); padding: 10px;">No levels defined yet.</p>';
         }
 
-        return levels.map(level => {
-          const levelKey = 'L' + level.level;
+        // LAZY LOADING: levels may be an array of numbers (e.g., [0, 1, 2])
+        // or an array of objects with level.level property
+        const normalizedLevels = levels.map(l => {
+          if (typeof l === 'number') {
+            return { level: l, assignments: null };  // Not yet loaded
+          }
+          return l;
+        });
+
+        return normalizedLevels.map(level => {
+          const levelNum = typeof level === 'number' ? level : level.level;
+          const levelKey = 'L' + levelNum;
+          const cacheKey = trackCode + '-' + levelKey;
           const isExpanded = expandedLevel === (trackCode + levelKey);
-          const assignCount = level.assignments ? level.assignments.length : 0;
+          const isLoading = loadingLevels[cacheKey];
+
+          // Check cache for loaded assignments
+          let assignments = null;
+          if (trackAssignmentsCache[cacheKey]) {
+            assignments = trackAssignmentsCache[cacheKey];
+          } else if (level.assignments) {
+            assignments = level.assignments;
+          }
+
+          const assignCount = assignments ? assignments.length : '?';
           const levelNames = ['Foundation', 'Apprentice', 'Specialist', 'Expert', 'Master'];
-          const levelName = levelNames[level.level] || 'Level ' + level.level;
+          const levelName = levelNames[levelNum] || 'Level ' + levelNum;
+
+          // Build body content based on loading state
+          let bodyContent = '';
+          if (isLoading) {
+            bodyContent = '<p style="color: var(--accent-secondary); padding: 20px; text-align: center;">⏳ Loading assignments...</p>';
+          } else if (!assignments && isExpanded) {
+            // No assignments loaded yet - will trigger load in toggleLevel
+            bodyContent = '<p style="color: var(--muted); padding: 20px; text-align: center;">Loading...</p>';
+          } else {
+            bodyContent = `
+              <div class="assignments-container">
+                ${renderAssignments(assignments, trackCode, trackName, studioName, levelNum)}
+                <button class="add-btn" onclick="showAddAssignmentModal('${trackCode}', '${trackName}', '${studioName}', ${levelNum})">+ Add Assignment</button>
+              </div>
+            `;
+          }
 
           return `
             <div class="level-card ${isExpanded ? 'expanded' : ''}">
-              <div class="level-header" onclick="toggleLevel('${trackCode}', '${levelKey}')">
+              <div class="level-header" onclick="toggleLevel('${trackCode}', '${levelKey}', '${trackName}', '${studioName}')">
                 <div>
                   <span class="level-badge">${levelKey}</span>
                   <span class="level-title">${levelName}</span>
                 </div>
                 <div style="color: var(--muted); font-size: 12px;">
-                  ${assignCount} assignments ${isExpanded ? '▼' : '▶'}
+                  ${isLoading ? '⏳' : assignCount + ' assignments'} ${isExpanded ? '▼' : '▶'}
                 </div>
               </div>
               <div class="level-body">
-                <div class="assignments-container">
-                  ${renderAssignments(level.assignments, trackCode, trackName, studioName, level.level)}
-                  <button class="add-btn" onclick="showAddAssignmentModal('${trackCode}', '${trackName}', '${studioName}', ${level.level})">+ Add Assignment</button>
-                </div>
+                ${bodyContent}
               </div>
             </div>
           `;
         }).join('');
       }
 
-      function toggleLevel(trackCode, levelKey) {
+      function toggleLevel(trackCode, levelKey, trackName, studioName) {
         event.stopPropagation();
         const key = trackCode + levelKey;
+        const cacheKey = trackCode + '-' + levelKey;
+        const levelNum = parseInt(levelKey.replace('L', ''));
+
         if (expandedLevel === key) {
           expandedLevel = null;
+          renderStudios();
         } else {
           expandedLevel = key;
           expandedAssignment = null;
+
+          // LAZY LOADING: Check if we need to fetch assignments
+          if (!trackAssignmentsCache[cacheKey] && !loadingLevels[cacheKey]) {
+            // Need to fetch assignments
+            loadingLevels[cacheKey] = true;
+            renderStudios();  // Show loading state
+
+            google.script.run
+              .withSuccessHandler(function(assignments) {
+                loadingLevels[cacheKey] = false;
+                trackAssignmentsCache[cacheKey] = assignments || [];
+                console.log('Loaded ' + (assignments ? assignments.length : 0) + ' assignments for ' + cacheKey);
+                renderStudios();  // Re-render with loaded data
+              })
+              .withFailureHandler(function(err) {
+                loadingLevels[cacheKey] = false;
+                trackAssignmentsCache[cacheKey] = [];
+                console.error('Failed to load assignments for ' + cacheKey + ':', err);
+                alert('Error loading assignments: ' + (err.message || err));
+                renderStudios();
+              })
+              .getTrackAssignments(trackCode, levelNum);
+          } else {
+            renderStudios();
+          }
         }
-        renderStudios();
       }
 
       function renderAssignments(assignments, trackCode, trackName, studioName, level) {
@@ -4506,20 +4581,25 @@
         return assignments.map(assign => {
           const assignKey = trackCode + '-L' + level + '-a' + assign.num;
           const isExpanded = expandedAssignment === assignKey;
-          const totalMP = assign.achievements ? assign.achievements.reduce((sum, a) => sum + (a.mp || 0), 0) : 0;
+          // Use maxMP from assignment if available, otherwise calculate from achievements
+          const totalMP = assign.maxMP || (assign.achievements ? assign.achievements.reduce((sum, a) => sum + (a.mp || 0), 0) : 0);
           const achCount = assign.achievements ? assign.achievements.length : 0;
+          const weekLabel = assign.week ? ` (Week ${assign.week})` : '';
+          const statusIcon = assign.status === '✅ Published' ? '✅' : (assign.status === '⏳ Ready' ? '⏳' : '📝');
 
           return `
             <div class="assignment-card ${isExpanded ? 'expanded' : ''}">
               <div class="assignment-header ${isExpanded ? 'expanded' : ''}" onclick="toggleAssignment('${assignKey}')">
-                <span class="assignment-num">a${assign.num}</span>
-                <span class="assignment-title">${assign.title}</span>
-                <span class="assignment-mp">${totalMP} MP (${achCount})</span>
+                <span class="assignment-num">a${assign.num}${weekLabel}</span>
+                <span class="assignment-title">${assign.title || 'Untitled'}</span>
+                <span class="assignment-mp">${statusIcon} ${totalMP} MP</span>
               </div>
               <div class="assignment-body">
+                ${assign.topic ? `<p style="color: var(--muted); margin: 0 0 10px 0; font-size: 12px;">Topic: ${assign.topic}</p>` : ''}
+                ${assign.description ? `<p style="color: var(--text); margin: 0 0 10px 0; font-size: 13px;">${assign.description}</p>` : ''}
                 <div class="achievements-container" id="ach-${assignKey}">
                   ${renderAchievements(assign.achievements, assignKey)}
-                  <button class="add-btn" onclick="addAchievementInline('${trackCode}', '${trackName}', '${studioName}', ${level}, ${assign.num}, '${assign.title.replace(/'/g, "\\'")}')">+ Add Achievement</button>
+                  <button class="add-btn" onclick="addAchievementInline('${trackCode}', '${trackName}', '${studioName}', ${level}, ${assign.num}, '${(assign.title || '').replace(/'/g, "\\'")}')">+ Add Achievement</button>
                 </div>
               </div>
             </div>
@@ -4803,16 +4883,29 @@
       let availableLootItems = ['Mystery Box', 'Rare Item', 'Epic Item', 'Legendary Item'];
 
       function loadEventsData() {
+        document.getElementById('events-list').innerHTML = '<p style="color: var(--muted); text-align: center; padding: 40px;">Loading events...</p>';
+
         google.script.run
           .withSuccessHandler(events => {
+            console.log('Events loaded:', events);
             renderEvents(events);
+          })
+          .withFailureHandler(err => {
+            console.error('Failed to load events:', err);
+            document.getElementById('events-list').innerHTML = '<p style="color: var(--error); text-align: center; padding: 40px;">Error loading events: ' + (err.message || err) + '</p>';
           })
           .getEventsData();
 
         // Also load loot items for the modal
         google.script.run
           .withSuccessHandler(items => {
-            availableLootItems = items || availableLootItems;
+            console.log('Loot items loaded:', items);
+            if (items && items.length > 0) {
+              availableLootItems = items;
+            }
+          })
+          .withFailureHandler(err => {
+            console.error('Failed to load loot items:', err);
           })
           .getAvailableLootItems();
       }
@@ -4967,12 +5060,18 @@
 
         google.script.run
           .withSuccessHandler(result => {
-            if (result.success) {
+            console.log('Create event result:', result);
+            if (result && result.success) {
+              alert('Event created successfully!');
               closeEventModal();
               loadEventsData();
             } else {
-              alert('Error: ' + result.message);
+              alert('Error: ' + (result ? result.message : 'Unknown error - result was null'));
             }
+          })
+          .withFailureHandler(err => {
+            console.error('Create event failed:', err);
+            alert('Failed to create event: ' + (err.message || err));
           })
           .createEvent(eventData);
       }
