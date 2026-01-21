@@ -28,6 +28,7 @@ var CURRICULUM_CONFIG = {
     CREATE_ASSIGNMENT: '➕ Create Assignments',
     ASSIGNMENTS: '📋 Assignments',
     ITEMS: '📦 Item Config',
+    CLASSROOMS: '🏫 Classrooms',
     // New sheets for curriculum system
     EVENTS: '📅 Events',
     LEDGER: '📜 Change Ledger',
@@ -307,6 +308,80 @@ function getTracksOverview() {
 }
 
 /**
+ * Get ALL assignments at once, grouped by trackCode-level
+ * Used for initial cache load (no more lazy loading)
+ * Reads from 📋 Assignments sheet (system-generated, read-only)
+ */
+function getAllAssignments() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var assignSheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.ASSIGNMENTS);
+
+  if (!assignSheet || assignSheet.getLastRow() < 2) {
+    return {};
+  }
+
+  // 📋 ASSIGNMENTS columns: Period, Tags, Classroom ID, Assignment ID, Title, Track Code, Level, Week, Max Points, State, Last Updated
+  // Row 1 is header, data starts at row 2
+  var assignData = assignSheet.getRange(2, 1, assignSheet.getLastRow() - 1, 11).getValues();
+  var grouped = {}; // key: "TRACKCODE-L#", value: array of assignments
+
+  for (var i = 0; i < assignData.length; i++) {
+    var row = assignData[i];
+    var trackCode = String(row[5] || '').trim();  // Column F: Track Code
+    var level = parseInt(row[6]) || 0;            // Column G: Level
+
+    if (!trackCode) continue; // Skip empty rows
+
+    var key = trackCode.toUpperCase() + '-L' + level;
+
+    if (!grouped[key]) {
+      grouped[key] = [];
+    }
+
+    // Extract assignment number from title format "0A1: Title" where the digit after week letter is the num
+    var title = String(row[4] || '');
+    var week = String(row[7] || 'A');
+    var num = 1;
+    // Try to extract num from title pattern like "0A1:" or "1B2:"
+    var titleMatch = title.match(/^\d+[A-Z](\d+):/);
+    if (titleMatch) {
+      num = parseInt(titleMatch[1]) || 1;
+    }
+
+    // Map state to status format expected by frontend
+    var state = String(row[9] || '');
+    var status = state === 'PUBLISHED' ? '✅ Published' : (state === 'DRAFT' ? '📝 Draft' : '⏳ Ready');
+
+    grouped[key].push({
+      rowIndex: i + 2,
+      period: String(row[0] || ''),               // Column A: Period
+      tags: String(row[1] || ''),                 // Column B: Tags
+      classroomId: String(row[2] || ''),          // Column C: Classroom ID
+      assignmentId: String(row[3] || ''),         // Column D: Assignment ID
+      title: title,                               // Column E: Title
+      trackCode: trackCode,                       // Column F: Track Code
+      level: level,                               // Column G: Level
+      week: week,                                 // Column H: Week
+      num: num,                                   // Extracted from title
+      maxMP: parseInt(row[8]) || 10,              // Column I: Max Points (renamed to match frontend)
+      status: status,                             // Column J: State (converted to frontend format)
+      lastUpdated: row[10] ? String(row[10]) : '' // Column K: Last Updated
+    });
+  }
+
+  // Sort each group by week then by title
+  var keys = Object.keys(grouped);
+  for (var j = 0; j < keys.length; j++) {
+    grouped[keys[j]].sort(function(a, b) {
+      if (a.week !== b.week) return a.week.localeCompare(b.week);
+      return a.title.localeCompare(b.title);
+    });
+  }
+
+  return grouped;
+}
+
+/**
  * LAZY LOADING: Get assignments for a specific track and level
  * Called when user expands a track
  */
@@ -323,24 +398,28 @@ function getTrackAssignments(trackCode, level) {
 
   var assignments = [];
   var levelNum = parseInt(level) || 0;
+  var trackCodeStr = String(trackCode).trim().toUpperCase();
 
   assignData.forEach(function(row, index) {
-    if (row[0] === trackCode && parseInt(row[1]) === levelNum) {
+    var rowTrackCode = String(row[0] || '').trim().toUpperCase();
+    var rowLevel = parseInt(row[1]) || 0;
+
+    if (rowTrackCode === trackCodeStr && rowLevel === levelNum) {
       assignments.push({
         rowIndex: index + 3,
-        trackCode: row[0],
-        level: parseInt(row[1]) || 0,
-        week: row[2] || 'A',
+        trackCode: String(row[0] || ''),
+        level: rowLevel,
+        week: String(row[2] || 'A'),
         num: parseInt(row[3]) || 1,
-        title: row[4] || '',
+        title: String(row[4] || ''),
         maxMP: parseInt(row[5]) || 10,
-        topic: row[6] || '',
-        description: row[7] || '',
-        viewMaterials: row[8] || '',
-        copyMaterials: row[9] || '',
-        websiteId: row[10] || '',
-        status: row[11] || '⏳ Ready',
-        classroomId: row[12] || '',
+        topic: String(row[6] || ''),
+        description: String(row[7] || ''),
+        viewMaterials: String(row[8] || ''),
+        copyMaterials: String(row[9] || ''),
+        websiteId: String(row[10] || ''),
+        status: String(row[11] || '⏳ Ready'),
+        classroomId: String(row[12] || ''),
         createdDate: row[13] || ''
       });
     }
@@ -1267,6 +1346,118 @@ function publishSingleAssignment_(rowIndex) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 6A: CLASSROOM MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Get all classrooms with their active status
+ * Returns array of classroom objects
+ */
+function getClassrooms() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.CLASSROOMS);
+
+  if (!sheet || sheet.getLastRow() < 3) {
+    return [];
+  }
+
+  // Columns: Course ID, Classroom Name, Section, Period, Active, Student Count
+  var data = sheet.getRange(3, 1, sheet.getLastRow() - 2, 6).getValues();
+  var classrooms = [];
+
+  data.forEach(function(row, index) {
+    if (!row[0]) return;
+
+    classrooms.push({
+      rowIndex: index + 3,
+      courseId: String(row[0]),
+      name: String(row[1] || ''),
+      section: String(row[2] || ''),
+      period: String(row[3] || ''),
+      active: row[4] === true || row[4] === 'TRUE',
+      studentCount: parseInt(row[5]) || 0
+    });
+  });
+
+  return classrooms;
+}
+
+/**
+ * Toggle a classroom's active status
+ */
+function toggleClassroomActive(rowIndex, active) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.CLASSROOMS);
+
+  if (!sheet) {
+    return { success: false, message: 'Classrooms sheet not found' };
+  }
+
+  var newValue = active ? 'TRUE' : 'FALSE';
+  sheet.getRange(rowIndex, 5).setValue(newValue);  // Column E is Active
+
+  return { success: true, active: active };
+}
+
+/**
+ * Get publish data with classroom breakdown
+ * Shows which assignments are published to which classrooms
+ */
+function getPublishData() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Get classrooms
+  var classrooms = getClassrooms();
+
+  // Get assignments from Create Assignments sheet
+  var assignSheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.CREATE_ASSIGNMENT);
+  var assignments = [];
+
+  if (assignSheet && assignSheet.getLastRow() >= 3) {
+    var data = assignSheet.getRange(3, 1, assignSheet.getLastRow() - 2, 14).getValues();
+
+    data.forEach(function(row, index) {
+      if (!row[0]) return;
+
+      var status = row[11] ? String(row[11]) : '';
+      var isReady = status === '⏳ Ready';
+      var isPublished = status.indexOf('✅') === 0;
+
+      assignments.push({
+        rowIndex: index + 3,
+        trackCode: String(row[0]),
+        level: parseInt(row[1]) || 0,
+        week: String(row[2] || 'A'),
+        assignNum: parseInt(row[3]) || 1,
+        title: String(row[4] || ''),
+        maxMP: parseInt(row[5]) || 10,
+        status: status,
+        isReady: isReady,
+        isPublished: isPublished,
+        classroomIds: row[12] ? String(row[12]) : ''  // JSON of posted classroom IDs
+      });
+    });
+  }
+
+  // Count stats
+  var ready = assignments.filter(function(a) { return a.isReady; });
+  var published = assignments.filter(function(a) { return a.isPublished; });
+  var activeClassrooms = classrooms.filter(function(c) { return c.active; });
+
+  return {
+    classrooms: classrooms,
+    assignments: assignments,
+    stats: {
+      totalAssignments: assignments.length,
+      readyCount: ready.length,
+      publishedCount: published.length,
+      totalClassrooms: classrooms.length,
+      activeClassrooms: activeClassrooms.length
+    }
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 6B: ACHIEVEMENT DETAILS MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1569,19 +1760,42 @@ function pingCurriculum() {
  */
 function getCurriculumDashboardData() {
   try {
-    // LAZY LOADING: Return minimal data for initial page load
-    // Assignments, Events, LootItems are loaded on-demand
+    // FULL CACHE LOAD: Load everything upfront (app is the only editor)
 
     var result = {
-      _debug: ['LAZY LOAD v2: Starting...'],
+      _debug: ['FULL CACHE v1: Starting...'],
       studios: ['Sound', 'Visual', 'Interactive'],
       resourceTypes: ['None', 'YouTube', 'Link'],
       curriculum: { studios: {} },
-      events: [],      // Load via getEventsData() when Events tab opens
-      lootItems: []    // Load via getAvailableLootItems() when needed
+      assignments: {},  // All assignments grouped by "TRACKCODE-L#"
+      events: [],       // All events
+      lootItems: []     // Load via getAvailableLootItems() when needed
     };
 
-    // Step 1: Get MINIMAL track overview (no assignments - they load on demand)
+    // Step 1: Get all assignments upfront
+    try {
+      result.assignments = getAllAssignments();
+      var assignKeys = Object.keys(result.assignments);
+      var totalAssign = 0;
+      for (var k = 0; k < assignKeys.length; k++) {
+        totalAssign += result.assignments[assignKeys[k]].length;
+      }
+      result._debug.push('Assignments: ' + totalAssign + ' in ' + assignKeys.length + ' groups');
+    } catch (assignErr) {
+      result._debug.push('Assign ERR: ' + assignErr.message);
+      result.assignments = {};
+    }
+
+    // Step 2: Get all events upfront
+    try {
+      result.events = getEventsData() || [];
+      result._debug.push('Events: ' + result.events.length);
+    } catch (eventErr) {
+      result._debug.push('Events ERR: ' + eventErr.message);
+      result.events = [];
+    }
+
+    // Step 3: Get track overview
     try {
       var overview = getTracksOverview();
       result._debug.push('Tracks: ' + (overview ? overview.trackCount : 0));
@@ -1620,6 +1834,11 @@ function getCurriculumDashboardData() {
 
     result._debug.push('Done');
 
+    // Generate content hash for cache validation
+    var contentHash = generateContentHash_();
+    result._cacheHash = contentHash;
+    result._timestamp = new Date().getTime();
+
     // CRITICAL: Force JSON serialization to ensure clean data for google.script.run
     try {
       var jsonStr = JSON.stringify(result);
@@ -1633,7 +1852,9 @@ function getCurriculumDashboardData() {
         resourceTypes: ['None', 'YouTube', 'Link'],
         curriculum: { studios: {} },
         events: [],
-        lootItems: []
+        lootItems: [],
+        _cacheHash: 'error',
+        _timestamp: new Date().getTime()
       };
     }
 
@@ -1644,9 +1865,57 @@ function getCurriculumDashboardData() {
       resourceTypes: ['None', 'YouTube', 'Link'],
       curriculum: { studios: {} },
       events: [],
-      lootItems: []
+      lootItems: [],
+      _cacheHash: 'error',
+      _timestamp: new Date().getTime()
     };
   }
+}
+
+/**
+ * Generate a simple hash based on sheet row counts and last modified
+ * Used for cache invalidation
+ */
+function generateContentHash_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var parts = [];
+
+  // Track row counts from key sheets
+  var sheets = [
+    CURRICULUM_CONFIG.SHEETS.TRACKS,
+    CURRICULUM_CONFIG.SHEETS.CREATE_ASSIGNMENT,
+    CURRICULUM_CONFIG.SHEETS.EVENTS
+  ];
+
+  sheets.forEach(function(sheetName) {
+    var sheet = ss.getSheetByName(sheetName);
+    if (sheet) {
+      parts.push(sheetName + ':' + sheet.getLastRow());
+    }
+  });
+
+  // Simple hash: join parts and get a numeric hash
+  var str = parts.join('|');
+  var hash = 0;
+  for (var i = 0; i < str.length; i++) {
+    var char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+/**
+ * Quick check if curriculum data has changed
+ * Frontend can call this first to see if a full reload is needed
+ */
+function checkCurriculumHash(clientHash) {
+  var serverHash = generateContentHash_();
+  return {
+    changed: clientHash !== serverHash,
+    serverHash: serverHash,
+    timestamp: new Date().getTime()
+  };
 }
 
 /**
