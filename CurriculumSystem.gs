@@ -308,6 +308,97 @@ function getTracksOverview() {
 }
 
 /**
+<<<<<<< HEAD
+ * Get ALL assignments at once, grouped by trackCode-level
+ * Used for initial cache load (no more lazy loading)
+ * Reads from 📋 Assignments sheet (system-generated, read-only)
+ */
+function getAllAssignments() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetName = CURRICULUM_CONFIG.SHEETS.ASSIGNMENTS;
+  var assignSheet = ss.getSheetByName(sheetName);
+
+  // Debug: return info about what we found
+  var debug = {
+    sheetName: sheetName,
+    sheetFound: !!assignSheet,
+    allSheets: ss.getSheets().map(function(s) { return s.getName(); })
+  };
+
+  if (!assignSheet) {
+    return { _debug: debug, _error: 'Sheet not found: ' + sheetName };
+  }
+
+  var lastRow = assignSheet.getLastRow();
+  debug.lastRow = lastRow;
+
+  if (lastRow < 2) {
+    return { _debug: debug, _error: 'No data rows' };
+  }
+
+  // 📋 ASSIGNMENTS columns: Period, Tags, Classroom ID, Assignment ID, Title, Track Code, Level, Week, Max Points, State, Last Updated
+  // Row 1 is header, data starts at row 2
+  var assignData = assignSheet.getRange(2, 1, assignSheet.getLastRow() - 1, 11).getValues();
+  var grouped = {}; // key: "TRACKCODE-L#", value: array of assignments
+
+  for (var i = 0; i < assignData.length; i++) {
+    var row = assignData[i];
+    var trackCode = String(row[5] || '').trim();  // Column F: Track Code
+    var level = parseInt(row[6]) || 0;            // Column G: Level
+
+    if (!trackCode) continue; // Skip empty rows
+
+    var key = trackCode.toUpperCase() + '-L' + level;
+
+    if (!grouped[key]) {
+      grouped[key] = [];
+    }
+
+    // Extract assignment number from title format "0A1: Title" where the digit after week letter is the num
+    var title = String(row[4] || '');
+    var week = String(row[7] || 'A');
+    var num = 1;
+    // Try to extract num from title pattern like "0A1:" or "1B2:"
+    var titleMatch = title.match(/^\d+[A-Z](\d+):/);
+    if (titleMatch) {
+      num = parseInt(titleMatch[1]) || 1;
+    }
+
+    // Map state to status format expected by frontend
+    var state = String(row[9] || '');
+    var status = state === 'PUBLISHED' ? '✅ Published' : (state === 'DRAFT' ? '📝 Draft' : '⏳ Ready');
+
+    grouped[key].push({
+      rowIndex: i + 2,
+      period: String(row[0] || ''),               // Column A: Period
+      tags: String(row[1] || ''),                 // Column B: Tags
+      classroomId: String(row[2] || ''),          // Column C: Classroom ID
+      assignmentId: String(row[3] || ''),         // Column D: Assignment ID
+      title: title,                               // Column E: Title
+      trackCode: trackCode,                       // Column F: Track Code
+      level: level,                               // Column G: Level
+      week: week,                                 // Column H: Week
+      num: num,                                   // Extracted from title
+      maxMP: parseInt(row[8]) || 10,              // Column I: Max Points (renamed to match frontend)
+      status: status,                             // Column J: State (converted to frontend format)
+      lastUpdated: row[10] ? String(row[10]) : '' // Column K: Last Updated
+    });
+  }
+
+  // Sort each group by week then by title
+  var keys = Object.keys(grouped);
+  for (var j = 0; j < keys.length; j++) {
+    grouped[keys[j]].sort(function(a, b) {
+      if (a.week !== b.week) return a.week.localeCompare(b.week);
+      return a.title.localeCompare(b.title);
+    });
+  }
+
+  return grouped;
+}
+
+/**
+=======
  * Get ALL assignments at once, grouped by trackCode-level
  * Used for initial cache load (no more lazy loading)
  * Reads from 📋 Assignments sheet (system-generated, read-only)
@@ -382,6 +473,7 @@ function getAllAssignments() {
 }
 
 /**
+>>>>>>> 31b27452680b71bfeffe021eec83d37ba20cc449
  * LAZY LOADING: Get assignments for a specific track and level
  * Called when user expands a track
  */
@@ -1774,6 +1866,44 @@ function getCurriculumDashboardData() {
 
     // Step 1: Get all assignments upfront
     try {
+<<<<<<< HEAD
+      var assignResult = getAllAssignments();
+
+      // Check for debug/error info
+      if (assignResult._debug) {
+        result._debug.push('Assign sheet search: ' + JSON.stringify(assignResult._debug));
+      }
+      if (assignResult._error) {
+        result._debug.push('Assign ERROR: ' + assignResult._error);
+        result.assignments = {};
+      } else {
+        result.assignments = assignResult;
+        var assignKeys = Object.keys(result.assignments).filter(function(k) { return k !== '_debug' && k !== '_error'; });
+        var totalAssign = 0;
+        for (var k = 0; k < assignKeys.length; k++) {
+          if (Array.isArray(result.assignments[assignKeys[k]])) {
+            totalAssign += result.assignments[assignKeys[k]].length;
+          }
+        }
+        result._debug.push('Assignments: ' + totalAssign + ' in ' + assignKeys.length + ' groups');
+      }
+    } catch (assignErr) {
+      result._debug.push('Assign ERR: ' + assignErr.message);
+      result.assignments = {};
+    }
+
+    // Step 2: Get all events upfront
+    try {
+      result.events = getEventsData() || [];
+      result._debug.push('Events: ' + result.events.length);
+    } catch (eventErr) {
+      result._debug.push('Events ERR: ' + eventErr.message);
+      result.events = [];
+    }
+
+    // Step 3: Get track overview
+    try {
+=======
       result.assignments = getAllAssignments();
       var assignKeys = Object.keys(result.assignments);
       var totalAssign = 0;
@@ -1797,6 +1927,7 @@ function getCurriculumDashboardData() {
 
     // Step 3: Get track overview
     try {
+>>>>>>> 31b27452680b71bfeffe021eec83d37ba20cc449
       var overview = getTracksOverview();
       result._debug.push('Tracks: ' + (overview ? overview.trackCount : 0));
 
