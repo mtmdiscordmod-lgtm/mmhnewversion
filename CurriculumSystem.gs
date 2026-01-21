@@ -30,7 +30,8 @@ var CURRICULUM_CONFIG = {
     ITEMS: '📦 Item Config',
     // New sheets for curriculum system
     EVENTS: '📅 Events',
-    LEDGER: '📜 Change Ledger'
+    LEDGER: '📜 Change Ledger',
+    ACHIEVEMENT_DETAILS: '📚 Achievement Details'
   },
 
   // Default studios (can be extended)
@@ -1120,6 +1121,232 @@ function publishSingleAssignment_(rowIndex) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 6B: ACHIEVEMENT DETAILS MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Setup the Achievement Details sheet
+ */
+function setupAchievementDetailsSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.ACHIEVEMENT_DETAILS);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(CURRICULUM_CONFIG.SHEETS.ACHIEVEMENT_DETAILS);
+  }
+
+  // Apply dark theme if available
+  if (typeof applyGlobalDarkTheme_ === 'function') {
+    applyGlobalDarkTheme_(sheet);
+  }
+
+  // Description row
+  sheet.getRange('A1:L1').merge().setValue('📚 ACHIEVEMENT DETAILS — Rich content for each achievement. ID format: {trackCode}-L{level}-a{assign}-{ach}');
+
+  // Headers
+  var headers = ['Achievement ID', 'Track Code', 'Level', 'Assign#', 'Ach#', 'Title', 'Description (HTML)', 'Pitfalls', 'Tools', 'Video URL', 'Links (JSON)', 'Modified'];
+  sheet.getRange(2, 1, 1, headers.length).setValues([headers]);
+
+  // Format
+  sheet.setFrozenRows(2);
+  sheet.setColumnWidth(1, 150); // Achievement ID
+  sheet.setColumnWidth(6, 200); // Title
+  sheet.setColumnWidth(7, 400); // Description
+  sheet.setColumnWidth(8, 250); // Pitfalls
+  sheet.setColumnWidth(11, 200); // Links
+
+  return { success: true, message: 'Achievement Details sheet created' };
+}
+
+/**
+ * Get all achievement details
+ */
+function getAchievementDetails() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.ACHIEVEMENT_DETAILS);
+
+  if (!sheet || sheet.getLastRow() < 3) {
+    return {};
+  }
+
+  var data = sheet.getRange(3, 1, sheet.getLastRow() - 2, 12).getValues();
+  var details = {};
+
+  data.forEach(function(row) {
+    var id = row[0];
+    if (id) {
+      details[id] = {
+        id: id,
+        trackCode: row[1],
+        level: row[2],
+        assignNum: row[3],
+        achNum: row[4],
+        title: row[5],
+        description: row[6],
+        pitfalls: row[7],
+        tools: row[8],
+        videoUrl: row[9],
+        links: parseJSON(row[10], []),
+        modified: row[11]
+      };
+    }
+  });
+
+  return details;
+}
+
+/**
+ * Get achievement details for a specific achievement
+ */
+function getAchievementDetail(achievementId) {
+  var all = getAchievementDetails();
+  return all[achievementId] || null;
+}
+
+/**
+ * Save achievement details (create or update)
+ */
+function saveAchievementDetail(detail) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.ACHIEVEMENT_DETAILS);
+
+  if (!sheet) {
+    setupAchievementDetailsSheet();
+    sheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.ACHIEVEMENT_DETAILS);
+  }
+
+  // Parse the achievement ID to extract parts: {trackCode}-L{level}-a{assign}-{ach}
+  var idParts = parseAchievementId(detail.id);
+
+  var rowData = [
+    detail.id,
+    idParts.trackCode || detail.trackCode || '',
+    idParts.level !== undefined ? idParts.level : (detail.level || 0),
+    idParts.assignNum || detail.assignNum || 1,
+    idParts.achNum || detail.achNum || 1,
+    detail.title || '',
+    detail.description || '',
+    detail.pitfalls || '',
+    detail.tools || '',
+    detail.videoUrl || '',
+    JSON.stringify(detail.links || []),
+    new Date()
+  ];
+
+  // Check if exists (update) or new (insert)
+  var existingRow = findAchievementRow(sheet, detail.id);
+
+  if (existingRow > 0) {
+    sheet.getRange(existingRow, 1, 1, rowData.length).setValues([rowData]);
+    return { success: true, action: 'updated', id: detail.id };
+  } else {
+    sheet.appendRow(rowData);
+    return { success: true, action: 'created', id: detail.id };
+  }
+}
+
+/**
+ * Parse achievement ID into parts
+ * Format: {trackCode}-L{level}-a{assignNum}-{achNum}
+ * Example: cf-L0-a1-1 → { trackCode: 'cf', level: 0, assignNum: 1, achNum: 1 }
+ */
+function parseAchievementId(id) {
+  if (!id) return {};
+
+  var match = id.match(/^([a-zA-Z0-9]+)-L(\d+)-a(\d+)-(\d+)$/);
+  if (match) {
+    return {
+      trackCode: match[1],
+      level: parseInt(match[2], 10),
+      assignNum: parseInt(match[3], 10),
+      achNum: parseInt(match[4], 10)
+    };
+  }
+  return {};
+}
+
+/**
+ * Find row index for an achievement ID
+ */
+function findAchievementRow(sheet, achievementId) {
+  if (sheet.getLastRow() < 3) return -1;
+
+  var ids = sheet.getRange(3, 1, sheet.getLastRow() - 2, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i][0] === achievementId) {
+      return i + 3; // +3 because data starts at row 3
+    }
+  }
+  return -1;
+}
+
+/**
+ * Import achievements from JSON object
+ * Expected format: { "id": { title, description, pitfalls, tools, videoUrl, links }, ... }
+ */
+function importAchievementsFromJSON(jsonData) {
+  var results = { imported: 0, updated: 0, errors: [] };
+
+  // jsonData can be a string or object
+  var data = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
+
+  Object.keys(data).forEach(function(id) {
+    try {
+      var item = data[id];
+      var detail = {
+        id: id,
+        title: item.title || '',
+        description: item.description || '',
+        pitfalls: item.pitfalls || '',
+        tools: item.tools || '',
+        videoUrl: item.videoUrl || null,
+        links: item.links || []
+      };
+
+      var result = saveAchievementDetail(detail);
+      if (result.action === 'created') {
+        results.imported++;
+      } else {
+        results.updated++;
+      }
+    } catch (e) {
+      results.errors.push({ id: id, error: e.message });
+    }
+  });
+
+  return results;
+}
+
+/**
+ * Delete an achievement detail
+ */
+function deleteAchievementDetail(achievementId) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CURRICULUM_CONFIG.SHEETS.ACHIEVEMENT_DETAILS);
+
+  if (!sheet) return { success: false, error: 'Sheet not found' };
+
+  var rowIndex = findAchievementRow(sheet, achievementId);
+  if (rowIndex > 0) {
+    sheet.deleteRow(rowIndex);
+    return { success: true, deleted: achievementId };
+  }
+
+  return { success: false, error: 'Achievement not found' };
+}
+
+/**
+ * Helper: Parse JSON safely
+ */
+function parseJSON(str, defaultVal) {
+  try {
+    return JSON.parse(str);
+  } catch (e) {
+    return defaultVal;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 7: TRACK SELECTION FORM MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1180,20 +1407,99 @@ function deleteTrackSelectionForm(formId) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
+ * Simple ping test - call from web app to verify functions work
+ */
+function pingCurriculum() {
+  return {
+    success: true,
+    timestamp: new Date().toISOString(),
+    message: 'CurriculumSystem.gs is loaded and working!'
+  };
+}
+
+/**
  * Get full curriculum dashboard data
+ * NOTE: Temporarily returning minimal data to debug null return issue
  */
 function getCurriculumDashboardData() {
-  return {
-    curriculum: getCurriculumData(),
-    tracks: getTracksList(),
-    events: getEventsData(),
-    publishQueue: getClassroomPublishQueue(),
-    forms: getTrackSelectionForms(),
-    history: getChangeHistory(20),
-    studios: CURRICULUM_CONFIG.STUDIOS,
-    resourceTypes: CURRICULUM_CONFIG.RESOURCE_TYPES,
-    lootItems: getAvailableLootItems()
-  };
+  // TEMPORARY: Return minimal data to test if size is the issue
+  try {
+    // Step 1: Just return bare minimum
+    var minimalResult = {
+      _debug: ['MINIMAL TEST - Step 1'],
+      studios: ['Sound', 'Visual', 'Interactive'],
+      resourceTypes: ['None', 'YouTube', 'Link'],
+      curriculum: { studios: {}, tracks: [], raw: [] },
+      tracks: [],
+      events: [],
+      publishQueue: [],
+      forms: [],
+      history: [],
+      lootItems: []
+    };
+
+    // Step 2: Try to add curriculum data
+    try {
+      var currData = getCurriculumData();
+      if (currData) {
+        // Only include summary, not full raw data yet
+        minimalResult._debug.push('getCurriculumData returned ' + (currData.raw ? currData.raw.length : 0) + ' items');
+        minimalResult.curriculum = {
+          studios: currData.studios || {},
+          tracks: currData.tracks || [],
+          raw: [] // Skip raw for now to reduce size
+        };
+        minimalResult._debug.push('Curriculum added (without raw)');
+      }
+    } catch (e) {
+      minimalResult._debug.push('getCurriculumData FAILED: ' + e.message);
+    }
+
+    // Step 3: Try tracks
+    try {
+      var tracks = getTracksList();
+      minimalResult.tracks = tracks || [];
+      minimalResult._debug.push('getTracksList: ' + (tracks ? tracks.length : 0) + ' tracks');
+    } catch (e) {
+      minimalResult._debug.push('getTracksList FAILED: ' + e.message);
+    }
+
+    // Step 4: Events (should be small)
+    try {
+      minimalResult.events = getEventsData() || [];
+      minimalResult._debug.push('getEventsData: OK');
+    } catch (e) {
+      minimalResult._debug.push('getEventsData FAILED: ' + e.message);
+    }
+
+    // Step 5: Other small data
+    try {
+      minimalResult.lootItems = getAvailableLootItems() || [];
+      minimalResult._debug.push('getAvailableLootItems: OK');
+    } catch (e) {
+      minimalResult._debug.push('getAvailableLootItems FAILED: ' + e.message);
+    }
+
+    // Skip publishQueue, forms, history for now
+    minimalResult._debug.push('Skipped: publishQueue, forms, history');
+    minimalResult._debug.push('MINIMAL TEST COMPLETE');
+
+    return minimalResult;
+
+  } catch (outerError) {
+    return {
+      _debug: ['OUTER ERROR: ' + outerError.message],
+      studios: ['Sound', 'Visual', 'Interactive'],
+      resourceTypes: ['None', 'YouTube', 'Link'],
+      curriculum: { studios: {}, tracks: [], raw: [] },
+      tracks: [],
+      events: [],
+      publishQueue: [],
+      forms: [],
+      history: [],
+      lootItems: []
+    };
+  }
 }
 
 /**
@@ -1233,4 +1539,94 @@ function importTracksIntoCurriculum() {
     imported: results.length,
     message: 'Imported ' + results.length + ' tracks into curriculum'
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEBUG / TEST FUNCTIONS - Run these from Apps Script to test
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * TEST: Run this from Apps Script to verify getCurriculumDashboardData works
+ * Go to Apps Script > Select "testDashboardData" > Run > Check Execution Log
+ */
+function testDashboardData() {
+  console.log('=== Testing getCurriculumDashboardData ===');
+  console.log('Step 1: Calling function...');
+
+  var result = getCurriculumDashboardData();
+
+  console.log('Step 2: Function returned!');
+  console.log('Result type: ' + typeof result);
+  console.log('Result is null: ' + (result === null));
+  console.log('Result is undefined: ' + (result === undefined));
+
+  if (result) {
+    console.log('Keys in result: ' + Object.keys(result).join(', '));
+    if (result._debug) {
+      console.log('Debug info:');
+      result._debug.forEach(function(msg) {
+        console.log('  ' + msg);
+      });
+    }
+    if (result.curriculum) {
+      console.log('Curriculum studios: ' + Object.keys(result.curriculum.studios || {}).join(', '));
+      console.log('Curriculum raw count: ' + (result.curriculum.raw ? result.curriculum.raw.length : 0));
+    }
+  } else {
+    console.log('ERROR: Result is null or undefined!');
+  }
+
+  console.log('=== Test Complete ===');
+}
+
+/**
+ * TEST FUNCTION - Run this to check if tracks are being read correctly
+ * Go to Apps Script > Select this function > Run > Check Execution Log
+ */
+function testCurriculumLoad() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Check Tracks sheet
+  var tracksSheet = ss.getSheetByName('⚙️ Tracks');
+  if (!tracksSheet) {
+    console.log('ERROR: Could not find sheet named "⚙️ Tracks"');
+    console.log('Available sheets:');
+    ss.getSheets().forEach(function(s) {
+      console.log('  - ' + s.getName());
+    });
+    return;
+  }
+
+  console.log('Found Tracks sheet!');
+  console.log('Last row: ' + tracksSheet.getLastRow());
+
+  // Read first few rows to check format
+  if (tracksSheet.getLastRow() >= 1) {
+    var row1 = tracksSheet.getRange(1, 1, 1, 5).getValues()[0];
+    console.log('Row 1: ' + JSON.stringify(row1));
+  }
+  if (tracksSheet.getLastRow() >= 2) {
+    var row2 = tracksSheet.getRange(2, 1, 1, 5).getValues()[0];
+    console.log('Row 2: ' + JSON.stringify(row2));
+  }
+  if (tracksSheet.getLastRow() >= 3) {
+    var row3 = tracksSheet.getRange(3, 1, 1, 5).getValues()[0];
+    console.log('Row 3: ' + JSON.stringify(row3));
+  }
+
+  // Now test the actual function
+  console.log('\n--- Testing getCurriculumData() ---');
+  var data = getCurriculumData();
+  console.log('Studios found: ' + Object.keys(data.studios).join(', '));
+  console.log('Raw tracks count: ' + data.raw.length);
+
+  if (data.raw.length > 0) {
+    console.log('First track: ' + JSON.stringify(data.raw[0]));
+  } else {
+    console.log('No tracks found! Check that data starts at row 3.');
+  }
+
+  // Show full result
+  console.log('\nFull curriculum data:');
+  console.log(JSON.stringify(data, null, 2));
 }

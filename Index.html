@@ -1940,6 +1940,7 @@
 
       <div class="curriculum-tabs">
         <button class="curriculum-tab active" onclick="switchCurriculumTab('builder')">🏗️ BUILDER</button>
+        <button class="curriculum-tab" onclick="switchCurriculumTab('achievements')">📖 ACHIEVEMENTS</button>
         <button class="curriculum-tab" onclick="switchCurriculumTab('events')">📅 EVENTS</button>
         <button class="curriculum-tab" onclick="switchCurriculumTab('publish')">🚀 PUBLISH</button>
         <button class="curriculum-tab" onclick="switchCurriculumTab('forms')">📝 FORMS</button>
@@ -1955,6 +1956,27 @@
 
         <div id="studios-container" class="studio-cards">
           <!-- Studios will be rendered here dynamically -->
+        </div>
+      </div>
+
+      <!-- TAB: Achievements -->
+      <div id="curriculum-achievements-tab" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h3 style="color: var(--secondary); margin: 0;">📖 Achievement Details</h3>
+          <div style="display: flex; gap: 10px;">
+            <button class="btn-secondary" onclick="showImportAchievementsModal()">📥 IMPORT JSON</button>
+            <button class="btn-primary" onclick="showAddAchievementModal()">+ NEW ACHIEVEMENT</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <input type="text" id="achievement-search" placeholder="Search achievements by ID, title, or track..."
+            style="width: 100%; padding: 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; color: #fff; font-size: 14px;"
+            oninput="filterAchievements(this.value)">
+        </div>
+
+        <div id="achievements-list" style="display: grid; gap: 15px;">
+          <p style="color: var(--muted); text-align: center; padding: 40px;">Loading achievements...</p>
         </div>
       </div>
 
@@ -2263,6 +2285,106 @@
         <div class="modal-actions" style="margin-top: 12px;">
           <button class="btn-secondary" onclick="closeEventModal()">Cancel</button>
           <button class="btn-primary" onclick="saveNewEvent()">Create Event</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Import Achievements JSON -->
+    <div id="import-achievements-modal" class="curriculum-modal" style="display: none;">
+      <div class="curriculum-modal-content" style="max-width: 700px;">
+        <h3 style="margin-bottom: 15px;">📥 Import Achievements from JSON</h3>
+        <p style="color: var(--muted); font-size: 12px; margin-bottom: 15px;">
+          Paste your achievement JSON data below. Expected format:<br>
+          <code style="background: var(--bg-deep); padding: 2px 6px; border-radius: 4px; font-size: 10px;">{ "cf-L0-a1-1": { "title": "...", "description": "...", "pitfalls": "...", "tools": "...", "videoUrl": null, "links": [] }, ... }</code>
+        </p>
+        <textarea id="import-json-textarea" rows="12" placeholder='Paste your JSON here...'
+          style="width: 100%; font-family: monospace; font-size: 11px; background: var(--bg-deep); border: 1px solid var(--border); border-radius: 8px; color: #fff; padding: 12px;"></textarea>
+        <div id="import-preview" style="margin-top: 10px; padding: 10px; background: var(--bg-card); border-radius: 8px; display: none;">
+          <span style="color: var(--muted);">Preview: </span><span id="import-preview-count">0</span> achievements detected
+        </div>
+        <div class="modal-actions" style="margin-top: 15px;">
+          <button class="btn-secondary" onclick="closeImportModal()">Cancel</button>
+          <button class="btn-secondary" onclick="previewImport()">Preview</button>
+          <button class="btn-primary" onclick="executeImport()">Import All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Achievement Editor with WYSIWYG -->
+    <div id="achievement-editor-modal" class="curriculum-modal" style="display: none;">
+      <div class="curriculum-modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+        <h3 style="margin-bottom: 5px;">📖 <span id="ach-editor-title">Edit Achievement</span></h3>
+        <div style="color: var(--muted); font-size: 11px; margin-bottom: 15px;" id="ach-editor-id">ID: —</div>
+
+        <div class="form-row" style="gap: 15px; margin-bottom: 15px;">
+          <div class="form-group" style="flex: 2;">
+            <label>Achievement ID</label>
+            <input type="text" id="ach-id-input" placeholder="e.g., cf-L0-a1-1" style="font-family: monospace;">
+          </div>
+          <div class="form-group" style="flex: 3;">
+            <label>Title</label>
+            <input type="text" id="ach-title-input" placeholder="Achievement title...">
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 15px;">
+          <label>Description (HTML supported)</label>
+          <div style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+            <!-- WYSIWYG Toolbar -->
+            <div style="background: var(--bg-deep); padding: 8px; display: flex; gap: 5px; flex-wrap: wrap; border-bottom: 1px solid var(--border);">
+              <button type="button" onclick="wysiwygCmd('bold')" style="padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: #fff; cursor: pointer;" title="Bold"><b>B</b></button>
+              <button type="button" onclick="wysiwygCmd('italic')" style="padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: #fff; cursor: pointer;" title="Italic"><i>I</i></button>
+              <button type="button" onclick="wysiwygCmd('underline')" style="padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: #fff; cursor: pointer;" title="Underline"><u>U</u></button>
+              <span style="border-left: 1px solid var(--border); margin: 0 5px;"></span>
+              <button type="button" onclick="wysiwygCmd('insertUnorderedList')" style="padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: #fff; cursor: pointer;" title="Bullet List">• List</button>
+              <button type="button" onclick="wysiwygCmd('insertOrderedList')" style="padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: #fff; cursor: pointer;" title="Numbered List">1. List</button>
+              <span style="border-left: 1px solid var(--border); margin: 0 5px;"></span>
+              <button type="button" onclick="wysiwygInsertLink()" style="padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: #fff; cursor: pointer;" title="Insert Link">🔗 Link</button>
+              <select onchange="wysiwygColor(this.value); this.selectedIndex=0;" style="padding: 4px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: #fff; cursor: pointer;">
+                <option value="">Color</option>
+                <option value="#01d9f5">Cyan</option>
+                <option value="#fcf203">Yellow</option>
+                <option value="#bc14b0">Pink</option>
+                <option value="#34d399">Green</option>
+                <option value="#f87171">Red</option>
+              </select>
+              <span style="border-left: 1px solid var(--border); margin: 0 5px;"></span>
+              <button type="button" onclick="toggleHtmlView()" style="padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: var(--muted); cursor: pointer; font-size: 10px;" id="html-toggle-btn">&lt;/&gt; HTML</button>
+            </div>
+            <!-- Editable Area -->
+            <div id="ach-description-editor" contenteditable="true"
+              style="min-height: 150px; padding: 15px; background: var(--bg-card); color: #fff; font-size: 13px; line-height: 1.6; outline: none;"
+              oninput="syncDescriptionToTextarea()"></div>
+            <!-- Hidden textarea for raw HTML -->
+            <textarea id="ach-description-raw" style="display: none; width: 100%; min-height: 150px; font-family: monospace; font-size: 11px; background: var(--bg-deep); color: #0f0; border: none; padding: 15px;"></textarea>
+          </div>
+        </div>
+
+        <div class="form-row" style="gap: 15px; margin-bottom: 15px;">
+          <div class="form-group" style="flex: 1;">
+            <label>Pitfalls / Common Mistakes</label>
+            <textarea id="ach-pitfalls-input" rows="3" placeholder="What students often get wrong..."></textarea>
+          </div>
+          <div class="form-group" style="flex: 1;">
+            <label>Tools Used</label>
+            <input type="text" id="ach-tools-input" placeholder="e.g., Construct 3, Photoshop">
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 15px;">
+          <label>Video URL (optional)</label>
+          <input type="url" id="ach-video-input" placeholder="https://youtube.com/watch?v=...">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 15px;">
+          <label>Links (JSON array)</label>
+          <textarea id="ach-links-input" rows="2" placeholder='[{"title": "Resource", "url": "https://..."}]' style="font-family: monospace; font-size: 11px;"></textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeAchievementEditorModal()">Cancel</button>
+          <button class="btn-danger" onclick="deleteCurrentAchievement()" id="ach-delete-btn" style="display: none;">Delete</button>
+          <button class="btn-primary" onclick="saveAchievementFromEditor()">Save Achievement</button>
         </div>
       </div>
     </div>
@@ -3800,13 +3922,332 @@
       // ═══════════════════════════════════════════════════════════════════════════
 
       let curriculumData = null;
+      let achievementDetails = {};
+      let currentEditingAchievementId = null;
+      let isHtmlViewMode = false;
       let expandedStudio = null;
       let expandedTrack = null;
       let expandedLevel = null;
       let expandedAssignment = null;
 
+      // ═══════════════════════════════════════════════════════════════════════════
+      // ACHIEVEMENT DETAILS FUNCTIONS
+      // ═══════════════════════════════════════════════════════════════════════════
+
+      function loadAchievementsData() {
+        document.getElementById('achievements-list').innerHTML = '<p style="color: var(--muted); text-align: center; padding: 40px;">Loading achievements...</p>';
+
+        google.script.run
+          .withSuccessHandler(data => {
+            achievementDetails = data || {};
+            renderAchievementsList();
+          })
+          .withFailureHandler(err => {
+            document.getElementById('achievements-list').innerHTML = '<p style="color: var(--error); text-align: center; padding: 40px;">Error loading achievements: ' + err.message + '</p>';
+          })
+          .getAchievementDetails();
+      }
+
+      function renderAchievementsList() {
+        const container = document.getElementById('achievements-list');
+        const achievements = Object.values(achievementDetails);
+
+        if (achievements.length === 0) {
+          container.innerHTML = '<p style="color: var(--muted); text-align: center; padding: 40px;">No achievement details found. Click "Import JSON" to import your existing data, or "New Achievement" to create one.</p>';
+          return;
+        }
+
+        // Group by track code
+        const byTrack = {};
+        achievements.forEach(ach => {
+          const track = ach.trackCode || 'Unknown';
+          if (!byTrack[track]) byTrack[track] = [];
+          byTrack[track].push(ach);
+        });
+
+        let html = '';
+        Object.keys(byTrack).sort().forEach(trackCode => {
+          const trackAchs = byTrack[trackCode].sort((a, b) => {
+            if (a.level !== b.level) return a.level - b.level;
+            if (a.assignNum !== b.assignNum) return a.assignNum - b.assignNum;
+            return a.achNum - b.achNum;
+          });
+
+          html += '<div class="achievement-track-group" style="margin-bottom: 20px;">';
+          html += '<h4 style="color: var(--primary); margin-bottom: 10px; padding: 8px 12px; background: var(--bg-deep); border-radius: 6px; cursor: pointer;" onclick="toggleAchievementGroup(this)">';
+          html += '📁 ' + trackCode.toUpperCase() + ' <span style="color: var(--muted); font-weight: normal;">(' + trackAchs.length + ' achievements)</span>';
+          html += '</h4>';
+          html += '<div class="achievement-group-items" style="display: none; padding-left: 15px;">';
+
+          trackAchs.forEach(ach => {
+            html += '<div class="achievement-item" style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; cursor: pointer;" onclick="editAchievement(\'' + ach.id + '\')">';
+            html += '<div style="display: flex; justify-content: space-between; align-items: start;">';
+            html += '<div>';
+            html += '<div style="font-family: monospace; font-size: 11px; color: var(--muted); margin-bottom: 4px;">' + ach.id + '</div>';
+            html += '<div style="font-weight: bold; color: #fff;">' + (ach.title || 'Untitled') + '</div>';
+            if (ach.tools) html += '<div style="font-size: 11px; color: var(--secondary); margin-top: 4px;">🛠️ ' + ach.tools + '</div>';
+            html += '</div>';
+            html += '<div style="text-align: right; font-size: 10px; color: var(--muted);">';
+            html += 'L' + ach.level + ' / A' + ach.assignNum + ' / #' + ach.achNum;
+            html += '</div>';
+            html += '</div>';
+            html += '</div>';
+          });
+
+          html += '</div></div>';
+        });
+
+        container.innerHTML = html;
+      }
+
+      function toggleAchievementGroup(header) {
+        const items = header.nextElementSibling;
+        items.style.display = items.style.display === 'none' ? 'block' : 'none';
+      }
+
+      function filterAchievements(query) {
+        const q = query.toLowerCase();
+        const items = document.querySelectorAll('.achievement-item');
+        const groups = document.querySelectorAll('.achievement-track-group');
+
+        if (!q) {
+          // Reset - collapse all groups
+          groups.forEach(g => {
+            g.style.display = 'block';
+            g.querySelector('.achievement-group-items').style.display = 'none';
+          });
+          return;
+        }
+
+        groups.forEach(group => {
+          const items = group.querySelectorAll('.achievement-item');
+          let hasVisible = false;
+
+          items.forEach(item => {
+            const text = item.textContent.toLowerCase();
+            if (text.includes(q)) {
+              item.style.display = 'block';
+              hasVisible = true;
+            } else {
+              item.style.display = 'none';
+            }
+          });
+
+          group.style.display = hasVisible ? 'block' : 'none';
+          if (hasVisible) {
+            group.querySelector('.achievement-group-items').style.display = 'block';
+          }
+        });
+      }
+
+      // Import Modal Functions
+      function showImportAchievementsModal() {
+        document.getElementById('import-json-textarea').value = '';
+        document.getElementById('import-preview').style.display = 'none';
+        document.getElementById('import-achievements-modal').style.display = 'flex';
+      }
+
+      function closeImportModal() {
+        document.getElementById('import-achievements-modal').style.display = 'none';
+      }
+
+      function previewImport() {
+        const textarea = document.getElementById('import-json-textarea');
+        try {
+          const data = JSON.parse(textarea.value);
+          const count = Object.keys(data).length;
+          document.getElementById('import-preview-count').textContent = count;
+          document.getElementById('import-preview').style.display = 'block';
+        } catch (e) {
+          alert('Invalid JSON: ' + e.message);
+        }
+      }
+
+      function executeImport() {
+        const textarea = document.getElementById('import-json-textarea');
+        let data;
+        try {
+          data = JSON.parse(textarea.value);
+        } catch (e) {
+          alert('Invalid JSON: ' + e.message);
+          return;
+        }
+
+        document.getElementById('import-preview').innerHTML = '<span style="color: var(--primary);">Importing...</span>';
+
+        google.script.run
+          .withSuccessHandler(result => {
+            alert('Import complete!\n\nImported: ' + result.imported + '\nUpdated: ' + result.updated + (result.errors.length > 0 ? '\nErrors: ' + result.errors.length : ''));
+            closeImportModal();
+            loadAchievementsData();
+          })
+          .withFailureHandler(err => {
+            alert('Import failed: ' + err.message);
+          })
+          .importAchievementsFromJSON(data);
+      }
+
+      // Achievement Editor Functions
+      function showAddAchievementModal() {
+        currentEditingAchievementId = null;
+        document.getElementById('ach-editor-title').textContent = 'New Achievement';
+        document.getElementById('ach-editor-id').textContent = 'ID: (auto-generated from ID field)';
+        document.getElementById('ach-id-input').value = '';
+        document.getElementById('ach-id-input').disabled = false;
+        document.getElementById('ach-title-input').value = '';
+        document.getElementById('ach-description-editor').innerHTML = '';
+        document.getElementById('ach-description-raw').value = '';
+        document.getElementById('ach-pitfalls-input').value = '';
+        document.getElementById('ach-tools-input').value = '';
+        document.getElementById('ach-video-input').value = '';
+        document.getElementById('ach-links-input').value = '[]';
+        document.getElementById('ach-delete-btn').style.display = 'none';
+        isHtmlViewMode = false;
+        document.getElementById('ach-description-editor').style.display = 'block';
+        document.getElementById('ach-description-raw').style.display = 'none';
+        document.getElementById('achievement-editor-modal').style.display = 'flex';
+      }
+
+      function editAchievement(id) {
+        const ach = achievementDetails[id];
+        if (!ach) return;
+
+        currentEditingAchievementId = id;
+        document.getElementById('ach-editor-title').textContent = 'Edit Achievement';
+        document.getElementById('ach-editor-id').textContent = 'ID: ' + id;
+        document.getElementById('ach-id-input').value = id;
+        document.getElementById('ach-id-input').disabled = true;
+        document.getElementById('ach-title-input').value = ach.title || '';
+        document.getElementById('ach-description-editor').innerHTML = ach.description || '';
+        document.getElementById('ach-description-raw').value = ach.description || '';
+        document.getElementById('ach-pitfalls-input').value = ach.pitfalls || '';
+        document.getElementById('ach-tools-input').value = ach.tools || '';
+        document.getElementById('ach-video-input').value = ach.videoUrl || '';
+        document.getElementById('ach-links-input').value = JSON.stringify(ach.links || [], null, 2);
+        document.getElementById('ach-delete-btn').style.display = 'inline-block';
+        isHtmlViewMode = false;
+        document.getElementById('ach-description-editor').style.display = 'block';
+        document.getElementById('ach-description-raw').style.display = 'none';
+        document.getElementById('achievement-editor-modal').style.display = 'flex';
+      }
+
+      function closeAchievementEditorModal() {
+        document.getElementById('achievement-editor-modal').style.display = 'none';
+        currentEditingAchievementId = null;
+      }
+
+      function saveAchievementFromEditor() {
+        const id = document.getElementById('ach-id-input').value.trim();
+        if (!id) {
+          alert('Achievement ID is required!');
+          return;
+        }
+
+        // Get description from the right source
+        let description;
+        if (isHtmlViewMode) {
+          description = document.getElementById('ach-description-raw').value;
+        } else {
+          description = document.getElementById('ach-description-editor').innerHTML;
+        }
+
+        let links = [];
+        try {
+          links = JSON.parse(document.getElementById('ach-links-input').value || '[]');
+        } catch (e) {
+          alert('Invalid Links JSON: ' + e.message);
+          return;
+        }
+
+        const detail = {
+          id: id,
+          title: document.getElementById('ach-title-input').value,
+          description: description,
+          pitfalls: document.getElementById('ach-pitfalls-input').value,
+          tools: document.getElementById('ach-tools-input').value,
+          videoUrl: document.getElementById('ach-video-input').value || null,
+          links: links
+        };
+
+        google.script.run
+          .withSuccessHandler(result => {
+            alert('Achievement saved!');
+            closeAchievementEditorModal();
+            loadAchievementsData();
+          })
+          .withFailureHandler(err => {
+            alert('Save failed: ' + err.message);
+          })
+          .saveAchievementDetail(detail);
+      }
+
+      function deleteCurrentAchievement() {
+        if (!currentEditingAchievementId) return;
+        if (!confirm('Delete achievement "' + currentEditingAchievementId + '"? This cannot be undone.')) return;
+
+        google.script.run
+          .withSuccessHandler(result => {
+            alert('Achievement deleted.');
+            closeAchievementEditorModal();
+            loadAchievementsData();
+          })
+          .withFailureHandler(err => {
+            alert('Delete failed: ' + err.message);
+          })
+          .deleteAchievementDetail(currentEditingAchievementId);
+      }
+
+      // WYSIWYG Editor Functions
+      function wysiwygCmd(cmd) {
+        document.execCommand(cmd, false, null);
+        document.getElementById('ach-description-editor').focus();
+      }
+
+      function wysiwygInsertLink() {
+        const url = prompt('Enter URL:');
+        if (url) {
+          document.execCommand('createLink', false, url);
+        }
+      }
+
+      function wysiwygColor(color) {
+        if (color) {
+          document.execCommand('foreColor', false, color);
+          document.getElementById('ach-description-editor').focus();
+        }
+      }
+
+      function toggleHtmlView() {
+        const editor = document.getElementById('ach-description-editor');
+        const raw = document.getElementById('ach-description-raw');
+        const btn = document.getElementById('html-toggle-btn');
+
+        if (isHtmlViewMode) {
+          // Switch to visual mode
+          editor.innerHTML = raw.value;
+          editor.style.display = 'block';
+          raw.style.display = 'none';
+          btn.style.background = 'var(--bg-card)';
+          isHtmlViewMode = false;
+        } else {
+          // Switch to HTML mode
+          raw.value = editor.innerHTML;
+          editor.style.display = 'none';
+          raw.style.display = 'block';
+          btn.style.background = 'var(--primary)';
+          isHtmlViewMode = true;
+        }
+      }
+
+      function syncDescriptionToTextarea() {
+        if (!isHtmlViewMode) {
+          document.getElementById('ach-description-raw').value = document.getElementById('ach-description-editor').innerHTML;
+        }
+      }
+
       function switchCurriculumTab(tab) {
         document.getElementById('curriculum-builder-tab').style.display = 'none';
+        document.getElementById('curriculum-achievements-tab').style.display = 'none';
         document.getElementById('curriculum-events-tab').style.display = 'none';
         document.getElementById('curriculum-publish-tab').style.display = 'none';
         document.getElementById('curriculum-forms-tab').style.display = 'none';
@@ -3818,6 +4259,7 @@
         document.getElementById('curriculum-' + tab + '-tab').style.display = 'block';
 
         // Load data for specific tabs
+        if (tab === 'achievements') loadAchievementsData();
         if (tab === 'events') loadEventsData();
         if (tab === 'publish') refreshPublishQueue();
         if (tab === 'forms') loadFormsData();
@@ -3826,19 +4268,70 @@
 
       function loadCurriculumData() {
         document.getElementById('curriculum-loading').style.display = 'block';
-        document.getElementById('studios-container').innerHTML = '';
+        document.getElementById('studios-container').innerHTML = '<p style="color: var(--muted);">Step 1: Testing connection to CurriculumSystem.gs...</p>';
 
+        // STEP 1: Test if we can call ANY function in CurriculumSystem.gs
         google.script.run
-          .withSuccessHandler(data => {
-            curriculumData = data;
-            document.getElementById('curriculum-loading').style.display = 'none';
-            renderStudios();
+          .withSuccessHandler(pingResult => {
+            if (!pingResult) {
+              document.getElementById('studios-container').innerHTML = '<div style="background: #450a0a; border: 1px solid #f87171; padding: 20px; border-radius: 8px; margin: 20px;"><strong style="color: #f87171;">PING FAILED:</strong><br>pingCurriculum() returned null.<br>CurriculumSystem.gs may not be deployed.</div>';
+              document.getElementById('curriculum-loading').style.display = 'none';
+              return;
+            }
+
+            document.getElementById('studios-container').innerHTML = '<p style="color: #34d399;">Step 1 OK: ' + pingResult.message + '</p><p style="color: var(--muted);">Step 2: Loading curriculum data...</p>';
+
+            // STEP 2: Now load the actual data
+            google.script.run
+              .withSuccessHandler(data => {
+                curriculumData = data;
+                document.getElementById('curriculum-loading').style.display = 'none';
+
+                // DEBUG: Show what we received
+                if (!data) {
+                  document.getElementById('studios-container').innerHTML = '<div style="background: #064e3b; border: 1px solid #34d399; padding: 10px; border-radius: 8px; margin-bottom: 10px;"><strong style="color: #34d399;">✓ Ping worked!</strong></div><div style="background: #450a0a; border: 1px solid #f87171; padding: 20px; border-radius: 8px; margin: 20px;"><strong style="color: #f87171;">DATA ERROR:</strong><br>getCurriculumDashboardData() returned null.<br>The function exists but returned nothing.</div>';
+                  return;
+                }
+
+                // Show debug status from backend
+                let debugHtml = '';
+                if (data._debug && data._debug.length > 0) {
+                  debugHtml = '<div style="background: #1e3a5f; border: 1px solid #60a5fa; padding: 15px; border-radius: 8px; margin: 20px; font-family: monospace; font-size: 12px;"><strong style="color: #60a5fa;">BACKEND DEBUG:</strong><br>' + data._debug.join('<br>') + '</div>';
+                }
+
+                if (!data.curriculum) {
+                  document.getElementById('studios-container').innerHTML = debugHtml + '<div style="background: #450a0a; border: 1px solid #f87171; padding: 20px; border-radius: 8px; margin: 20px;"><strong style="color: #f87171;">DEBUG ERROR:</strong><br>data.curriculum is missing.<br><br>Data received: ' + JSON.stringify(Object.keys(data)) + '</div>';
+                  return;
+                }
+
+                if (!data.curriculum.studios) {
+                  document.getElementById('studios-container').innerHTML = debugHtml + '<div style="background: #450a0a; border: 1px solid #f87171; padding: 20px; border-radius: 8px; margin: 20px;"><strong style="color: #f87171;">DEBUG ERROR:</strong><br>data.curriculum.studios is missing.<br><br>data.curriculum keys: ' + JSON.stringify(Object.keys(data.curriculum)) + '</div>';
+                  return;
+                }
+
+                // Show debug info briefly
+                const studioNames = Object.keys(data.curriculum.studios);
+                const trackCount = data.curriculum.raw ? data.curriculum.raw.length : 0;
+                document.getElementById('studios-container').innerHTML = debugHtml + '<div style="background: #064e3b; border: 1px solid #34d399; padding: 10px; border-radius: 8px; margin-bottom: 20px;"><strong style="color: #34d399;">✓ Data Loaded:</strong> ' + studioNames.length + ' studios, ' + trackCount + ' tracks</div>';
+
+                // Now render
+                try {
+                  renderStudios();
+                } catch (renderErr) {
+                  document.getElementById('studios-container').innerHTML += '<div style="background: #450a0a; border: 1px solid #f87171; padding: 20px; border-radius: 8px; margin: 20px;"><strong style="color: #f87171;">RENDER ERROR:</strong><br>' + renderErr.message + '<br><br>Stack: ' + renderErr.stack + '</div>';
+                }
+              })
+              .withFailureHandler(err => {
+                document.getElementById('curriculum-loading').style.display = 'none';
+                document.getElementById('studios-container').innerHTML = '<div style="background: #064e3b; border: 1px solid #34d399; padding: 10px; border-radius: 8px; margin-bottom: 10px;"><strong style="color: #34d399;">✓ Ping worked!</strong></div><div style="background: #450a0a; border: 1px solid #f87171; padding: 20px; border-radius: 8px; margin: 20px;"><strong style="color: #f87171;">BACKEND ERROR on getCurriculumDashboardData:</strong><br>' + (err.message || err) + '</div>';
+              })
+              .getCurriculumDashboardData();
           })
           .withFailureHandler(err => {
             document.getElementById('curriculum-loading').style.display = 'none';
-            document.getElementById('studios-container').innerHTML = '<p style="color: var(--danger);">Error loading curriculum data: ' + err.message + '</p>';
+            document.getElementById('studios-container').innerHTML = '<div style="background: #450a0a; border: 1px solid #f87171; padding: 20px; border-radius: 8px; margin: 20px;"><strong style="color: #f87171;">PING ERROR:</strong><br>Could not call pingCurriculum().<br>Error: ' + (err.message || err) + '<br><br>This means CurriculumSystem.gs is not properly deployed.</div>';
           })
-          .getCurriculumDashboardData();
+          .pingCurriculum();
       }
 
       function refreshCurriculumData() {
